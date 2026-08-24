@@ -89,6 +89,7 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
         payload['type'] = 'poll';
         payload['pollOptions'] = [_optionA.text.trim(), _optionB.text.trim()];
       case PostKind.photo:
+      case PostKind.file:
       case PostKind.text:
         payload['type'] = 'text';
     }

@@ -7,6 +7,7 @@ import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
 import 'create_group_screen.dart';
+import 'group_chat_screen.dart';
 
 /// Groups directory — backed by `GET /groups`, with join via
 /// `PUT /groups/:id/join` and group creation via `POST /groups`.
@@ -32,16 +33,12 @@ class _GroupsScreenState extends State<GroupsScreen> {
     return raw.map(groupFromJson).where((g) => !g.isDirect).toList();
   }
 
-  Future<void> _join(Group g) async {
-    try {
-      await Api.instance.groups.join(g.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Requested to join ${g.name}')));
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
-    }
+  Future<void> _open(Group g) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => GroupChatScreen(group: g)),
+    );
+    // Membership may have changed (joined from inside), so refresh the list.
+    if (mounted) setState(() => _reloadTick++);
   }
 
   @override
@@ -76,46 +73,69 @@ class _GroupsScreenState extends State<GroupsScreen> {
   }
 
   Widget _groupCard(Group g, TextTheme text) {
-    return SurfaceCard(
-      padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            height: 72,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [g.color, g.color.withValues(alpha: 0.7)],
-              ),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(ArdentRadii.md)),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(ArdentSpacing.s4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(g.name, style: text.titleLarge?.copyWith(fontSize: 17)),
-                const SizedBox(height: 2),
-                Text('${g.members} members', style: text.bodySmall),
-                if (g.desc.isNotEmpty) ...[
-                  const SizedBox(height: ArdentSpacing.s2),
-                  Text(g.desc, style: text.bodyMedium),
-                ],
-                const SizedBox(height: ArdentSpacing.s3),
-                Row(
-                  children: [
-                    ElevatedButton(
-                        onPressed: () => _join(g), child: const Text('Join')),
-                  ],
+    return InkWell(
+      onTap: () => _open(g),
+      borderRadius: BorderRadius.circular(ArdentRadii.md),
+      child: SurfaceCard(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 72,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [g.color, g.color.withValues(alpha: 0.7)],
                 ),
-              ],
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(ArdentRadii.md)),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(Icons.groups_rounded, color: Colors.white70, size: 30),
             ),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.all(ArdentSpacing.s4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(g.name, style: text.titleLarge?.copyWith(fontSize: 17)),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Text('${g.members} members', style: text.bodySmall),
+                            if (g.joined) ...[
+                              const SizedBox(width: 8),
+                              const DsChip(
+                                  label: 'Joined',
+                                  fg: ArdentColors.statusResolved,
+                                  bg: ArdentColors.statusResolvedBg),
+                            ] else if (g.pending) ...[
+                              const SizedBox(width: 8),
+                              const DsChip(
+                                  label: 'Pending',
+                                  fg: Color(0xFFC77700),
+                                  bg: ArdentColors.statusPendingBg),
+                            ],
+                          ],
+                        ),
+                        if (g.desc.isNotEmpty) ...[
+                          const SizedBox(height: ArdentSpacing.s2),
+                          Text(g.desc, style: text.bodyMedium),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: ArdentColors.fg3),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

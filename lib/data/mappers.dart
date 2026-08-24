@@ -245,9 +245,28 @@ PostKind _postKind(dynamic type) {
       return PostKind.poll;
     case 'photo':
       return PostKind.photo;
+    case 'file':
+      return PostKind.file;
     default:
       return PostKind.text;
   }
+}
+
+/// Formats a file size that may arrive as a byte count or an already-formatted
+/// string (e.g. `1.2 MB`).
+String _fileSizeLabel(dynamic v) {
+  if (v == null) return '';
+  if (v is String) return v.trim();
+  var size = _int(v).toDouble();
+  if (size <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var u = 0;
+  while (size >= 1024 && u < units.length - 1) {
+    size /= 1024;
+    u++;
+  }
+  final rounded = (u == 0) ? size.toStringAsFixed(0) : size.toStringAsFixed(1);
+  return '$rounded ${units[u]}';
 }
 
 List<MapEntry<String, String>> _details(dynamic value) {
@@ -294,6 +313,15 @@ String _kudosTo(dynamic value) {
 
 Post postFromJson(dynamic value) {
   final json = asMap(value);
+  final media = mediaFromJson(json);
+  // File metadata for `file` posts: prefer explicit fields, else a file media item.
+  final fileItem = media.where((m) => m.isFile).cast<MediaItem?>().firstWhere(
+        (m) => true,
+        orElse: () => null,
+      );
+  final fileName = _str(_pick(json, ['fileName', 'filename', 'attachmentName']),
+      fileItem?.fileName ?? '');
+  final fileSize = _fileSizeLabel(_pick(json, ['fileSize', 'size', 'bytes']));
   final post = Post(
     id: _str(_pick(json, ['id', '_id', 'slug'])),
     author: personFromJson(_pick(json, ['author', 'user', 'createdBy', 'postedBy'])),
@@ -310,7 +338,9 @@ Post postFromJson(dynamic value) {
     comments: asList(_pick(json, ['comments'])).map(commentFromJson).toList(),
     likeCount: _int(_pick(json, ['likeCount', 'likes', 'reactionCount', 'reactionsCount'])),
     shareCount: _int(_pick(json, ['shareCount', 'shares'])),
-    media: mediaFromJson(json),
+    media: media,
+    fileName: fileName,
+    fileSize: fileSize,
   );
   post.liked = _pick(json, ['myReaction', 'reaction']) != null ||
       _bool(_pick(json, ['likedByMe', 'liked']));
@@ -406,6 +436,13 @@ Group groupFromJson(dynamic value) {
   final id = _str(_pick(json, ['id', '_id']));
   final isDirect = _bool(_pick(json, ['isDirect', 'direct'])) ||
       '${_pick(json, ['type'])}' == 'direct';
+  final status = '${_pick(json, ['membershipStatus', 'status', 'myStatus'])}'.toLowerCase();
+  final joined = _bool(_pick(json, ['joined', 'isMember', 'member'])) ||
+      status == 'member' ||
+      status == 'active';
+  final pending = _bool(_pick(json, ['pending', 'requested'])) ||
+      status == 'pending' ||
+      status == 'requested';
   return Group(
     id: id,
     name: _str(_pick(json, ['name', 'title']), isDirect ? 'Direct message' : 'Group'),
@@ -413,6 +450,8 @@ Group groupFromJson(dynamic value) {
     color: parseColor(_pick(json, ['color'])) ?? avatarColorFor(id),
     desc: _str(_pick(json, ['description', 'desc'])),
     isDirect: isDirect,
+    joined: joined,
+    pending: pending,
   );
 }
 

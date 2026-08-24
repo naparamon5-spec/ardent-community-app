@@ -35,7 +35,7 @@ class Reaction {
 }
 
 /// Post kinds mirror the web PostCard branches.
-enum PostKind { text, announcement, kudos, poll, photo }
+enum PostKind { text, announcement, kudos, poll, photo, file }
 
 /// A single piece of attached media (image, video, or document) on a post or
 /// story. [url] is already absolute (resolved against the API origin).
@@ -105,6 +105,8 @@ class Post {
     this.likeCount = 0,
     this.shareCount = 0,
     this.media = const [],
+    this.fileName = '',
+    this.fileSize = '',
   }) : comments = comments ?? [];
 
   final String id;
@@ -125,6 +127,11 @@ class Post {
 
   /// Attached images / videos / documents.
   final List<MediaItem> media;
+
+  /// Document metadata for `file` posts (shown even when no downloadable URL is
+  /// present, mirroring the web feed).
+  final String fileName;
+  final String fileSize;
 
   bool liked = false;
   bool saved = false;
@@ -166,6 +173,8 @@ class Group {
     required this.color,
     required this.desc,
     this.isDirect = false,
+    this.joined = false,
+    this.pending = false,
   });
   final String id;
   final String name;
@@ -175,6 +184,12 @@ class Group {
 
   /// True for a 1:1 direct-message thread rather than a named group.
   final bool isDirect;
+
+  /// Whether the current user is an active member.
+  final bool joined;
+
+  /// Whether the current user has a pending join request.
+  final bool pending;
 }
 
 class Listing {

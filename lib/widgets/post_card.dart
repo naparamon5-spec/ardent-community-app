@@ -291,7 +291,7 @@ class _PostCardState extends State<PostCard> {
           const SizedBox(height: ArdentSpacing.s3),
           _typeBadge(),
           _body(text),
-          if (post.media.isNotEmpty) _mediaSection(),
+          _attachments(),
           const SizedBox(height: ArdentSpacing.s3),
           _actionBar(),
           if (_commentsOpen) _commentThread(text),
@@ -355,8 +355,17 @@ class _PostCardState extends State<PostCard> {
         icon = Icons.bar_chart_rounded;
         fg = ArdentColors.navy600;
         bg = ArdentColors.statusOpenBg;
-      case PostKind.text:
       case PostKind.photo:
+        label = 'Photo';
+        icon = Icons.image_rounded;
+        fg = ArdentColors.navy600;
+        bg = ArdentColors.statusOpenBg;
+      case PostKind.file:
+        label = 'File';
+        icon = Icons.insert_drive_file_rounded;
+        fg = ArdentColors.navy600;
+        bg = ArdentColors.statusOpenBg;
+      case PostKind.text:
         return const SizedBox.shrink();
     }
     return Padding(
@@ -375,6 +384,7 @@ class _PostCardState extends State<PostCard> {
         return _poll(text);
       case PostKind.text:
       case PostKind.photo:
+      case PostKind.file:
         return Text(post.text, style: text.bodyLarge);
     }
   }
@@ -524,17 +534,86 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
-  /// Renders attached images inline, videos as a poster tile, and documents as
-  /// a file card.
-  Widget _mediaSection() {
-    return Padding(
-      padding: const EdgeInsets.only(top: ArdentSpacing.s3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  /// Decides what attachment UI (if any) to show under the post body:
+  /// real media when present, otherwise a placeholder that mirrors the web feed
+  /// for `photo`/`file` posts that carry no downloadable URL.
+  Widget _attachments() {
+    if (post.media.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: ArdentSpacing.s3),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < post.media.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              _mediaTile(post.media[i]),
+            ],
+          ],
+        ),
+      );
+    }
+    if (post.kind == PostKind.photo) {
+      return Padding(
+        padding: const EdgeInsets.only(top: ArdentSpacing.s3),
+        child: _photoPlaceholder(),
+      );
+    }
+    if (post.kind == PostKind.file || post.fileName.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: ArdentSpacing.s3),
+        child: _fileCard(
+          post.fileName.isNotEmpty ? post.fileName : 'Attachment',
+          post.fileSize,
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _photoPlaceholder() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(ArdentRadii.sm),
+      child: Container(
+        height: 220,
+        color: ArdentColors.bgSubtle,
+        child: const Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.image_outlined, color: ArdentColors.fg3, size: 22),
+              SizedBox(width: 8),
+              Text('Photo', style: TextStyle(color: ArdentColors.fg3, fontSize: 14)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fileCard(String name, String size) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: ArdentColors.bgSubtle,
+        borderRadius: BorderRadius.circular(ArdentRadii.sm),
+        border: Border.all(color: ArdentColors.border),
+      ),
+      child: Row(
         children: [
-          for (var i = 0; i < post.media.length; i++) ...[
-            if (i > 0) const SizedBox(height: 8),
-            _mediaTile(post.media[i]),
+          const Icon(Icons.attach_file_rounded, color: ArdentColors.fg2, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: 14, color: ArdentColors.fg1),
+            ),
+          ),
+          if (size.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text(size, style: const TextStyle(color: ArdentColors.fg3, fontSize: 12)),
           ],
         ],
       ),
