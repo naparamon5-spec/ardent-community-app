@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../data/seed.dart';
+import '../api/api.dart';
+import '../api/session.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 
-/// Edit profile — a form mirroring the web profile edit flow.
+/// Edit profile — a form backed by `PATCH /users/me`.
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
 
@@ -13,39 +14,59 @@ class EditProfileScreen extends StatefulWidget {
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
-  final _name = TextEditingController(text: Seed.currentUser.name);
-  final _role = TextEditingController(text: Seed.currentUser.role);
-  final _email = TextEditingController(text: 'ramon.napa@ardentnetworks.com.ph');
-  final _location = TextEditingController(text: 'Pasig City, Philippines');
-  final _bio = TextEditingController(
-      text: 'Community member at Ardent Networks. Coffee, code, and House spirit. 🔴');
+  final _name = TextEditingController(text: AppSession.instance.me.name);
+  final _role = TextEditingController(text: AppSession.instance.me.role);
+  final _location = TextEditingController();
+  final _bio = TextEditingController();
+  bool _saving = false;
 
   @override
   void dispose() {
     _name.dispose();
     _role.dispose();
-    _email.dispose();
     _location.dispose();
     _bio.dispose();
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
-    Navigator.of(context).pop();
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Profile updated')),
-    );
+    final navigator = Navigator.of(context);
+    try {
+      final updated = await Api.instance.users.updateMe({
+        'name': _name.text.trim(),
+        'role': _role.text.trim(),
+        if (_location.text.trim().isNotEmpty) 'location': _location.text.trim(),
+        if (_bio.text.trim().isNotEmpty) 'bio': _bio.text.trim(),
+      });
+      // Reflect the change in the session so the profile/composer update.
+      AppSession.instance.setFromJson(updated);
+      navigator.pop();
+      messenger.showSnackBar(const SnackBar(content: Text('Profile updated')));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final me = Seed.currentUser;
+    final me = AppSession.instance.me;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Edit profile'),
         actions: [
-          TextButton(onPressed: _save, child: const Text('Save')),
+          TextButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Save')),
         ],
       ),
       body: ListView(
@@ -80,12 +101,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           const SizedBox(height: ArdentSpacing.s6),
           _field('Full name', _name),
           _field('Role / title', _role),
-          _field('Email', _email, keyboard: TextInputType.emailAddress),
           _field('Location', _location),
           _field('Bio', _bio, maxLines: 4),
           const SizedBox(height: ArdentSpacing.s5),
           ElevatedButton(
-            onPressed: _save,
+            onPressed: _saving ? null : _save,
             style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
             child: const Text('Save changes'),
           ),

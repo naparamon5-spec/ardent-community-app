@@ -1,71 +1,135 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
+import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
+import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
+import 'create_event_screen.dart';
 
-/// Events list — port of `pages/events.vue`.
-class EventsScreen extends StatelessWidget {
+/// Events list — backed by `GET /events`, with live RSVP via
+/// `PUT /events/:id/rsvp` and event creation via `POST /events`.
+class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
+
+  @override
+  State<EventsScreen> createState() => _EventsScreenState();
+}
+
+class _EventsScreenState extends State<EventsScreen> {
+  int _reloadTick = 0;
+
+  Future<void> _openCreate() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const CreateEventScreen()),
+    );
+    if (created == true && mounted) setState(() => _reloadTick++);
+  }
+
+  Future<List<EventItem>> _load() async {
+    final raw = await Api.instance.events.list();
+    return raw.map(eventFromJson).toList();
+  }
+
+  Future<void> _rsvp(EventItem e, String status) async {
+    try {
+      await Api.instance.events.rsvp(e.id, status: status);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(status == 'going' ? "You're going 🎉" : 'Marked interested')),
+      );
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(err.message)));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return ListView(
-      padding: const EdgeInsets.all(ArdentSpacing.s4),
-      children: [
-        for (final e in Seed.events) ...[
-          SurfaceCard(
-            padding: EdgeInsets.zero,
-            child: Column(
+    return Scaffold(
+      appBar: AppBar(title: const Text('Events')),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openCreate,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('Create'),
+      ),
+      body: AsyncView<List<EventItem>>(
+        key: ValueKey(_reloadTick),
+        loader: _load,
+        builder: (context, events, reload) {
+          if (events.isEmpty) {
+            return const EmptyState(
+                message: 'No events yet.', icon: Icons.event_outlined);
+          }
+          return RefreshIndicator(
+            onRefresh: reload,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(ArdentSpacing.s4),
+              itemCount: events.length,
+              separatorBuilder: (_, _) => const SizedBox(height: ArdentSpacing.s4),
+              itemBuilder: (context, i) => _eventCard(events[i], text),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _eventCard(EventItem e, TextTheme text) {
+    return SurfaceCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (e.featured)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: const BoxDecoration(
+                color: ArdentColors.accent,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(ArdentRadii.md)),
+              ),
+              child: Text('FEATURED',
+                  textAlign: TextAlign.center,
+                  style: text.labelSmall?.copyWith(color: Colors.white)),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(ArdentSpacing.s4),
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (e.featured)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    decoration: const BoxDecoration(
-                      color: ArdentColors.accent,
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(ArdentRadii.md)),
-                    ),
-                    child: Text('FEATURED',
-                        textAlign: TextAlign.center,
-                        style: text.labelSmall?.copyWith(color: Colors.white)),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.all(ArdentSpacing.s4),
-                  child: Row(
+                _dateBadge(e, text),
+                const SizedBox(width: ArdentSpacing.s4),
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _dateBadge(e, text),
-                      const SizedBox(width: ArdentSpacing.s4),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(e.title, style: text.titleMedium),
-                            const SizedBox(height: 3),
-                            _iconLine(Icons.schedule_rounded, e.time, text),
-                            _iconLine(Icons.place_outlined, e.location, text),
-                            const SizedBox(height: ArdentSpacing.s2),
-                            Text(e.desc, style: text.bodyMedium),
-                            const SizedBox(height: ArdentSpacing.s3),
-                            Row(
-                              children: [
-                                Text('${e.attendees} going · ${e.interested} interested',
-                                    style: text.bodySmall),
-                              ],
-                            ),
-                            const SizedBox(height: ArdentSpacing.s3),
-                            Row(
-                              children: [
-                                ElevatedButton(onPressed: () {}, child: const Text("I'm going")),
-                                const SizedBox(width: ArdentSpacing.s2),
-                                OutlinedButton(onPressed: () {}, child: const Text('Interested')),
-                              ],
-                            ),
-                          ],
-                        ),
+                      Text(e.title, style: text.titleMedium),
+                      const SizedBox(height: 3),
+                      if (e.time.isNotEmpty) _iconLine(Icons.schedule_rounded, e.time, text),
+                      if (e.location.isNotEmpty)
+                        _iconLine(Icons.place_outlined, e.location, text),
+                      if (e.desc.isNotEmpty) ...[
+                        const SizedBox(height: ArdentSpacing.s2),
+                        Text(e.desc, style: text.bodyMedium),
+                      ],
+                      const SizedBox(height: ArdentSpacing.s3),
+                      Text('${e.attendees} going · ${e.interested} interested',
+                          style: text.bodySmall),
+                      const SizedBox(height: ArdentSpacing.s3),
+                      Row(
+                        children: [
+                          ElevatedButton(
+                              onPressed: () => _rsvp(e, 'going'),
+                              child: const Text("I'm going")),
+                          const SizedBox(width: ArdentSpacing.s2),
+                          OutlinedButton(
+                              onPressed: () => _rsvp(e, 'interested'),
+                              child: const Text('Interested')),
+                        ],
                       ),
                     ],
                   ),
@@ -73,9 +137,8 @@ class EventsScreen extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: ArdentSpacing.s4),
         ],
-      ],
+      ),
     );
   }
 

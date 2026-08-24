@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
+import '../api/session.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import 'ds.dart';
@@ -39,11 +41,27 @@ class _PostCardState extends State<PostCard> {
       post.liked = !post.liked;
       post.likeCount += post.liked ? 1 : -1;
     });
+    // Fire-and-forget; roll back on failure.
+    final liked = post.liked;
+    final future = liked
+        ? Api.instance.posts.setReaction(post.id, 'like')
+        : Api.instance.posts.removeReaction(post.id);
+    future.catchError((_) {
+      if (!mounted) return;
+      setState(() {
+        post.liked = !liked;
+        post.likeCount += post.liked ? 1 : -1;
+      });
+    });
   }
 
   void _vote(int idx) {
-    setState(() {
-      post.pollOptions[idx].votes++;
+    final option = post.pollOptions[idx];
+    setState(() => option.votes++);
+    if (option.id.isEmpty) return; // No server id available; local-only.
+    Api.instance.posts.vote(post.id, option.id).catchError((_) {
+      if (mounted) setState(() => option.votes--);
+      return <String, dynamic>{};
     });
   }
 
@@ -62,16 +80,29 @@ class _PostCardState extends State<PostCard> {
     final t = _commentCtrl.text.trim();
     if (t.isEmpty) return;
     final target = _replyTarget;
+    final comment = Comment(author: AppSession.instance.me, text: t);
     setState(() {
       if (target != null) {
-        target.replies.add(Comment(author: Seed.currentUser, text: t));
+        target.replies.add(comment);
       } else {
-        post.comments.add(Comment(author: Seed.currentUser, text: t));
+        post.comments.add(comment);
       }
       _commentCtrl.clear();
       _replyTarget = null;
     });
     _toast(target != null ? 'Reply posted' : 'Comment posted');
+    // Persist to the backend; on failure, remove the optimistic bubble.
+    Api.instance.posts
+        .addComment(post.id,
+            text: t, parentId: target?.id.isNotEmpty == true ? target!.id : null)
+        .catchError((_) {
+      if (!mounted) return <String, dynamic>{};
+      setState(() {
+        (target?.replies ?? post.comments).remove(comment);
+      });
+      _toast('Comment failed to send', icon: Icons.error_outline_rounded);
+      return <String, dynamic>{};
+    });
   }
 
   void _toast(String message, {IconData icon = Icons.check_circle_rounded}) {
@@ -94,6 +125,13 @@ class _PostCardState extends State<PostCard> {
     setState(() => post.saved = !post.saved);
     _toast(post.saved ? 'Saved to your bookmarks' : 'Removed from saved',
         icon: post.saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded);
+    final saved = post.saved;
+    final future =
+        saved ? Api.instance.posts.save(post.id) : Api.instance.posts.unsave(post.id);
+    future.catchError((_) {
+      if (!mounted) return;
+      setState(() => post.saved = !saved);
+    });
   }
 
   /// Share flow — a Facebook-style sheet that slides up from the bottom with
@@ -168,6 +206,10 @@ class _PostCardState extends State<PostCard> {
       case 'feed':
         setState(() => post.shareCount++);
         _toast('Post shared to your feed');
+        Api.instance.posts.share(post.id).catchError((_) {
+          if (mounted) setState(() => post.shareCount--);
+          return <String, dynamic>{};
+        });
       case 'message':
         _toast('Opening a message…', icon: Icons.send_rounded);
       case 'group':
@@ -249,6 +291,7 @@ class _PostCardState extends State<PostCard> {
           const SizedBox(height: ArdentSpacing.s3),
           _typeBadge(),
           _body(text),
+          if (post.media.isNotEmpty) _mediaSection(),
           const SizedBox(height: ArdentSpacing.s3),
           _actionBar(),
           if (_commentsOpen) _commentThread(text),
@@ -481,6 +524,114 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
+  /// Renders attached images inline, videos as a poster tile, and documents as
+  /// a file card.
+  Widget _mediaSection() {
+    return Padding(
+      padding: const EdgeInsets.only(top: ArdentSpacing.s3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < post.media.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _mediaTile(post.media[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _mediaTile(MediaItem m) {
+    if (m.isImage) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(ArdentRadii.sm),
+        child: Image.network(
+          m.url,
+          fit: BoxFit.fitWidth,
+          width: double.infinity,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return Container(
+              height: 200,
+              color: ArdentColors.bgSubtle,
+              child: const Center(
+                child: SizedBox(
+                    width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
+              ),
+            );
+          },
+          errorBuilder: (context, _, _) => _brokenMedia('Image unavailable'),
+        ),
+      );
+    }
+    if (m.isVideo) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(ArdentRadii.sm),
+        child: Container(
+          height: 200,
+          color: ArdentColors.navy900,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 52),
+              if (m.caption != null && m.caption!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(m.caption!,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+    // File / document.
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: ArdentColors.bgSubtle,
+        borderRadius: BorderRadius.circular(ArdentRadii.sm),
+        border: Border.all(color: ArdentColors.border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.insert_drive_file_rounded, color: ArdentColors.accent, size: 28),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              m.fileName ?? m.url.split('/').last,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600, fontSize: 13, color: ArdentColors.fg1),
+            ),
+          ),
+          const Icon(Icons.download_rounded, color: ArdentColors.fg3, size: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _brokenMedia(String label) {
+    return Container(
+      height: 160,
+      color: ArdentColors.bgSubtle,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.broken_image_outlined, color: ArdentColors.fg3, size: 32),
+          const SizedBox(height: 6),
+          Text(label, style: const TextStyle(color: ArdentColors.fg3, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
   Widget _actionBar() {
     return Container(
       decoration: const BoxDecoration(
@@ -584,8 +735,8 @@ class _PostCardState extends State<PostCard> {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         DsAvatar(
-            initials: Seed.currentUser.initials,
-            color: Seed.currentUser.color,
+            initials: AppSession.instance.me.initials,
+            color: AppSession.instance.me.color,
             size: replying ? 26 : 30),
         const SizedBox(width: 8),
         // Facebook-style rounded pill holding the field and inline actions.

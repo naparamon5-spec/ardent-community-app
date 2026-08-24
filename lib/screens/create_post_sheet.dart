@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../api/session.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 
 /// A Facebook-style "Create post" sheet that slides up from the bottom, with a
-/// compose area and Photo / Poll / Kudos options below. Returns the created
-/// [Post], or null if cancelled.
-Future<Post?> showCreatePostSheet(BuildContext context, {PostKind initialKind = PostKind.text}) {
-  return showModalBottomSheet<Post>(
+/// compose area and Photo / Poll / Kudos options below. Returns the
+/// `POST /posts` request payload (JSON fields), or null if cancelled.
+Future<Map<String, dynamic>?> showCreatePostSheet(BuildContext context,
+    {PostKind initialKind = PostKind.text}) {
+  return showModalBottomSheet<Map<String, dynamic>>(
     context: context,
     isScrollControlled: true,
     backgroundColor: ArdentColors.bgSurface,
@@ -70,23 +72,27 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
   }
 
   void _submit() {
-    final post = Post(
-      id: 'new-${DateTime.now().millisecondsSinceEpoch}',
-      author: Seed.currentUser,
-      time: 'Just now',
-      kind: _kind,
-      title: _annTitle.text.trim(),
-      text: _text.text.trim(),
-      pinned: _kind == PostKind.announcement && _pinned,
-      kudosTo: _kudosTo.text.trim().isEmpty ? 'the team' : _kudosTo.text.trim(),
-      pollOptions: _kind == PostKind.poll
-          ? [
-              PollOption(_optionA.text.trim(), 0),
-              PollOption(_optionB.text.trim(), 0),
-            ]
-          : const [],
-    );
-    Navigator.of(context).pop(post);
+    final text = _text.text.trim();
+    // Map the composer state to the `POST /posts` payload documented in
+    // docs/API_DOCUMENTATION.md. Photo posts need a real file (no image picker
+    // wired yet), so a photo without an attachment is sent as a text post.
+    final payload = <String, dynamic>{'text': text};
+    switch (_kind) {
+      case PostKind.announcement:
+        payload['type'] = 'announcement';
+        payload['title'] = _annTitle.text.trim();
+        payload['pinned'] = _pinned;
+      case PostKind.kudos:
+        payload['type'] = 'kudos';
+        payload['kudosTo'] = _kudosTo.text.trim().isEmpty ? 'the team' : _kudosTo.text.trim();
+      case PostKind.poll:
+        payload['type'] = 'poll';
+        payload['pollOptions'] = [_optionA.text.trim(), _optionB.text.trim()];
+      case PostKind.photo:
+      case PostKind.text:
+        payload['type'] = 'text';
+    }
+    Navigator.of(context).pop(payload);
   }
 
   String get _hint => switch (_kind) {
@@ -94,7 +100,7 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
         PostKind.poll => 'Ask your question…',
         PostKind.photo => 'Say something about your photo…',
         PostKind.announcement => 'Write the announcement details…',
-        _ => "What's on your mind, ${Seed.currentUser.name.split(' ').first}?",
+        _ => "What's on your mind, ${AppSession.instance.me.name.split(' ').first}?",
       };
 
   @override
@@ -165,14 +171,14 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
                     Row(
                       children: [
                         DsAvatar(
-                            initials: Seed.currentUser.initials,
-                            color: Seed.currentUser.color,
+                            initials: AppSession.instance.me.initials,
+                            color: AppSession.instance.me.color,
                             size: 44),
                         const SizedBox(width: ArdentSpacing.s3),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(Seed.currentUser.name,
+                            Text(AppSession.instance.me.name,
                                 style: text.titleMedium?.copyWith(fontSize: 15)),
                             Padding(
                               padding: const EdgeInsets.only(top: 3),

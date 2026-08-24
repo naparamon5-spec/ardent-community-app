@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
+import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
+import 'user_profile_screen.dart';
 
-/// Facebook-style search — a full-screen field with recent searches below,
-/// filtering people and groups as you type.
+/// Cross-entity search — backed by `GET /search?q=` (people, posts, listings).
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -16,14 +18,30 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final _ctrl = TextEditingController();
   String _query = '';
-
-  // A little seeded history so the empty state looks alive.
-  final List<String> _recent = ['Sportsfest 2026', 'Priya Nandakumar', 'Design Community'];
+  String _committed = '';
+  final List<String> _recent = [];
 
   @override
   void dispose() {
     _ctrl.dispose();
     super.dispose();
+  }
+
+  void _run(String term) {
+    final t = term.trim();
+    setState(() {
+      _ctrl.text = t;
+      _query = t;
+      _committed = t;
+      if (t.isNotEmpty && !_recent.contains(t)) _recent.insert(0, t);
+    });
+  }
+
+  Future<({List<Person> people, List<Listing> listings})> _search() async {
+    final data = await Api.instance.search.query(_committed);
+    final people = asList(data['people'] ?? data['users']).map(personFromJson).toList();
+    final listings = asList(data['listings']).map(listingFromJson).toList();
+    return (people: people, listings: listings);
   }
 
   @override
@@ -36,6 +54,7 @@ class _SearchScreenState extends State<SearchScreen> {
           autofocus: true,
           textInputAction: TextInputAction.search,
           onChanged: (v) => setState(() => _query = v),
+          onSubmitted: _run,
           decoration: InputDecoration(
             hintText: 'Search Ardent Community',
             isDense: true,
@@ -49,6 +68,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     onPressed: () => setState(() {
                       _ctrl.clear();
                       _query = '';
+                      _committed = '';
                     }),
                   ),
             enabledBorder: OutlineInputBorder(
@@ -62,7 +82,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ),
       ),
-      body: _query.trim().isEmpty ? _recentList() : _results(),
+      body: _committed.trim().isEmpty ? _recentList() : _results(),
     );
   }
 
@@ -70,7 +90,8 @@ class _SearchScreenState extends State<SearchScreen> {
     final text = Theme.of(context).textTheme;
     if (_recent.isEmpty) {
       return Center(
-        child: Text('No recent searches', style: text.bodyLarge),
+        child: Text('Search people, posts, and listings',
+            style: text.bodyLarge?.copyWith(color: ArdentColors.fg3)),
       );
     }
     return ListView(
@@ -102,10 +123,7 @@ class _SearchScreenState extends State<SearchScreen> {
               icon: const Icon(Icons.close_rounded, size: 18, color: ArdentColors.fg3),
               onPressed: () => setState(() => _recent.remove(term)),
             ),
-            onTap: () => setState(() {
-              _ctrl.text = term;
-              _query = term;
-            }),
+            onTap: () => _run(term),
           ),
       ],
     );
@@ -113,65 +131,73 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _results() {
     final text = Theme.of(context).textTheme;
-    final q = _query.toLowerCase();
-    final people = Seed.people.where((p) => p.name.toLowerCase().contains(q)).toList();
-    final groups = Seed.groups.where((g) => g.name.toLowerCase().contains(q)).toList();
-
-    if (people.isEmpty && groups.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text('No results for "$_query"',
-              textAlign: TextAlign.center, style: text.bodyLarge),
-        ),
-      );
-    }
-
-    return ListView(
-      children: [
-        if (people.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
-            child: Overline('People'),
-          ),
-          for (final p in people)
-            ListTile(
-              leading: DsAvatar(initials: p.initials, color: p.color, size: 42),
-              title: Text(p.name, style: text.titleMedium?.copyWith(fontSize: 15)),
-              subtitle: Text(p.role),
-              onTap: () => _pick(p.name),
+    return FutureBuilder<({List<Person> people, List<Listing> listings})>(
+      key: ValueKey(_committed),
+      future: _search(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text("Couldn't search right now. Try again.",
+                  textAlign: TextAlign.center, style: text.bodyLarge),
             ),
-        ],
-        if (groups.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
-            child: Overline('Groups'),
-          ),
-          for (final g in groups)
-            ListTile(
-              leading: Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: g.color,
-                  borderRadius: BorderRadius.circular(ArdentRadii.sm),
-                ),
+          );
+        }
+        final people = snapshot.data!.people;
+        final listings = snapshot.data!.listings;
+        if (people.isEmpty && listings.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('No results for "$_committed"',
+                  textAlign: TextAlign.center, style: text.bodyLarge),
+            ),
+          );
+        }
+        return ListView(
+          children: [
+            if (people.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: Overline('People'),
               ),
-              title: Text(g.name, style: text.titleMedium?.copyWith(fontSize: 15)),
-              subtitle: Text('${g.members} members'),
-              onTap: () => _pick(g.name),
-            ),
-        ],
-      ],
-    );
-  }
-
-  void _pick(String term) {
-    if (!_recent.contains(term)) {
-      setState(() => _recent.insert(0, term));
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Opening "$term"')),
+              for (final p in people)
+                ListTile(
+                  leading: DsAvatar(initials: p.initials, color: p.color, size: 42),
+                  title: Text(p.name, style: text.titleMedium?.copyWith(fontSize: 15)),
+                  subtitle: Text(p.role),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => UserProfileScreen(person: p)),
+                  ),
+                ),
+            ],
+            if (listings.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: Overline('Marketplace'),
+              ),
+              for (final l in listings)
+                ListTile(
+                  leading: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: l.color,
+                      borderRadius: BorderRadius.circular(ArdentRadii.sm),
+                    ),
+                    child: const Icon(Icons.image_outlined, color: Colors.white54),
+                  ),
+                  title: Text(l.title, style: text.titleMedium?.copyWith(fontSize: 15)),
+                  subtitle: Text('${l.price} · ${l.seller}'),
+                ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

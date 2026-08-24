@@ -1,8 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for the app to reach the Ardent Community backend API. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="ardent_community"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic allows the default http://…:4000 dev backend.
+             Remove it (or scope it via a network-security-config) once the app
+             points at an https:// backend in production. -->
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

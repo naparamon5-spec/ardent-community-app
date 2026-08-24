@@ -1,15 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+import 'api/api.dart';
+import 'api/session.dart';
 import 'screens/chats_screen.dart';
 import 'screens/explore_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/search_screen.dart';
 import 'theme/ardent_colors.dart';
 import 'theme/ardent_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Load API_BASE_URL (and any other config) from the bundled .env. Optional —
+  // a missing file just falls back to the default/localhost base URL.
+  try {
+    await dotenv.load(fileName: '.env');
+    debugPrint('[Config] .env loaded (API_BASE_URL='
+        '${dotenv.maybeGet('API_BASE_URL') ?? '<not set>'})');
+  } catch (e) {
+    // No .env bundled; ApiConfig falls back to its default.
+    debugPrint('[Config] .env NOT loaded ($e) — using default base URL');
+  }
+  debugPrint('[Config] Resolved API base URL = ${ApiConfig.baseUrl}');
+  // Restore any saved JWT so authenticated API calls (Api.instance.*) work from
+  // launch. The backend client lives under lib/api/ — see lib/api/api.dart.
+  await AuthStore.instance.load();
   runApp(const ArdentCommunityApp());
 }
 
@@ -32,7 +51,69 @@ class ArdentCommunityApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: const AppShell(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+/// Chooses between the login screen and the main app based on whether a valid
+/// session is held. Rebuilds whenever the auth token changes (sign-in / -out).
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  @override
+  void initState() {
+    super.initState();
+    AuthStore.instance.addListener(_onAuthChanged);
+    _ensureProfileLoaded();
+  }
+
+  @override
+  void dispose() {
+    AuthStore.instance.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  void _onAuthChanged() {
+    if (mounted) setState(() {});
+    _ensureProfileLoaded();
+  }
+
+  /// When a token is present but the profile hasn't loaded yet (e.g. session
+  /// restored at launch), fetch `/auth/me`. A failure (invalid/expired token)
+  /// clears the token via ApiClient's 401 handler, dropping us to login.
+  Future<void> _ensureProfileLoaded() async {
+    if (AuthStore.instance.isAuthenticated && !AppSession.instance.isReady) {
+      try {
+        await AppSession.instance.loadMe();
+        Api.instance.realtime.connect();
+      } catch (_) {
+        // Handled by the 401 flow / surfaced on next interaction.
+      }
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!AuthStore.instance.isAuthenticated) {
+      return const LoginScreen();
+    }
+    // Authenticated but still fetching the profile at cold start.
+    if (!AppSession.instance.isReady) {
+      return const Scaffold(
+        backgroundColor: ArdentColors.bgSurface,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return AnimatedBuilder(
+      animation: AppSession.instance,
+      builder: (_, _) => const AppShell(),
     );
   }
 }

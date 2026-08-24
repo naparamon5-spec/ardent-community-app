@@ -1,51 +1,41 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
+import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 import '../widgets/post_card.dart';
 
-/// Another member's profile / timeline — Facebook-style: cover, identity,
-/// action buttons, an Intro/About card, and their posts.
-class UserProfileScreen extends StatelessWidget {
+/// Another member's profile / timeline — identity, an Intro card, and their
+/// posts loaded from `GET /users/:id/posts`.
+class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key, required this.person});
 
   final Person person;
 
-  /// A few sample posts authored by this person for their timeline.
-  List<Post> _timeline() {
-    return [
-      Post(
-        id: '${person.id}-p1',
-        author: person,
-        time: '3h ago',
-        kind: PostKind.text,
-        text: 'Grateful to be part of such an amazing team at Ardent. '
-            'Big things coming this quarter! 🚀',
-        likeCount: 42,
-        shareCount: 3,
-        comments: [
-          Comment(author: Seed.people.first, text: 'Well said! 🙌', likes: 3),
-        ],
-      ),
-      Post(
-        id: '${person.id}-p2',
-        author: person,
-        time: 'Yesterday',
-        kind: PostKind.photo,
-        text: 'Throwback to last year\'s team offsite. Who\'s ready for the next one?',
-        likeCount: 88,
-        shareCount: 6,
-      ),
-    ];
+  @override
+  State<UserProfileScreen> createState() => _UserProfileScreenState();
+}
+
+class _UserProfileScreenState extends State<UserProfileScreen> {
+  late Future<List<Post>> _posts;
+
+  Person get person => widget.person;
+
+  @override
+  void initState() {
+    super.initState();
+    _posts = Api.instance.users
+        .posts(person.id)
+        .then((r) => r.map(postFromJson).toList())
+        .catchError((_) => <Post>[]);
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return Scaffold(
-      // Cover bleeds up behind a transparent app bar; the avatar overlaps it
-      // via a non-clipping Stack (the sliver version clipped the avatar's top).
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -75,7 +65,8 @@ class UserProfileScreen extends StatelessWidget {
                 bottom: -40,
                 child: Container(
                   padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                  decoration:
+                      const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
                   child: DsAvatar(
                       initials: person.initials,
                       color: person.color,
@@ -101,17 +92,9 @@ class UserProfileScreen extends StatelessWidget {
                   children: [
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () => Navigator.of(context).maybePop(),
+                        onPressed: () => _messageSoon(context),
                         icon: const Icon(Icons.chat_bubble_outline_rounded, size: 16),
                         label: const Text('Message'),
-                      ),
-                    ),
-                    const SizedBox(width: ArdentSpacing.s3),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {},
-                        icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-                        label: const Text('Follow'),
                       ),
                     ),
                   ],
@@ -125,11 +108,6 @@ class UserProfileScreen extends StatelessWidget {
                       const SizedBox(height: ArdentSpacing.s3),
                       _line(Icons.work_outline_rounded,
                           '${person.role} at Ardent Networks', text),
-                      _line(Icons.place_outlined, 'Pasig City, Philippines', text),
-                      _line(Icons.mail_outline_rounded,
-                          '${person.name.split(' ').first.toLowerCase()}@ardentnetworks.com.ph',
-                          text),
-                      _line(Icons.cake_outlined, 'Joined 2024', text),
                     ],
                   ),
                 ),
@@ -139,16 +117,48 @@ class UserProfileScreen extends StatelessWidget {
               ],
             ),
           ),
-          for (final post in _timeline()) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
-              child: PostCard(post: post),
-            ),
-            const SizedBox(height: ArdentSpacing.s3),
-          ],
+          FutureBuilder<List<Post>>(
+            future: _posts,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.all(ArdentSpacing.s6),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final posts = snapshot.data ?? const <Post>[];
+              if (posts.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.all(ArdentSpacing.s6),
+                  child: Center(
+                    child: Text('No posts yet.',
+                        style: text.bodyLarge?.copyWith(color: ArdentColors.fg3)),
+                  ),
+                );
+              }
+              return Column(
+                children: [
+                  for (final post in posts) ...[
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
+                      child: PostCard(post: post),
+                    ),
+                    const SizedBox(height: ArdentSpacing.s3),
+                  ],
+                ],
+              );
+            },
+          ),
           const SizedBox(height: ArdentSpacing.s6),
         ],
       ),
+    );
+  }
+
+  void _messageSoon(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Open Chats to message this person')),
     );
   }
 

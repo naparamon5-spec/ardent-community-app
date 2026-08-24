@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
+import '../api/session.dart';
+import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
+import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
 import '../widgets/post_card.dart';
 import 'create_post_sheet.dart';
 import 'story_composer_screen.dart';
+import 'story_viewer_screen.dart';
 
-/// Home feed — port of the web `pages/index.vue`: pinned announcement banner,
-/// stories row, post composer entry, and the post feed.
+/// Home feed — backed by `GET /posts` (feed) and `GET /stories`, with the
+/// composer posting to `POST /posts`.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -17,7 +22,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _posts = Seed.buildPosts();
+  List<Post> _posts = [];
+  List<Story> _stories = [];
 
   void _toast(String message, {IconData icon = Icons.check_circle_rounded}) {
     ScaffoldMessenger.of(context)
@@ -35,36 +41,78 @@ class _HomeScreenState extends State<HomeScreen> {
       );
   }
 
-  /// Opens the Facebook-style "Create post" sheet that slides up from the
-  /// bottom. On Post, prepend the new card to the feed and show a message.
+  Future<void> _loadFeed() async {
+    final results = await Future.wait([
+      Api.instance.posts.feed(limit: 30),
+      Api.instance.stories.list().catchError((_) => <dynamic>[]),
+    ]);
+    _posts = (results[0]).map(postFromJson).toList();
+    _stories = (results[1]).map(storyFromJson).toList();
+  }
+
+  /// Opens the composer, sends the draft to the backend, and prepends the
+  /// created post to the feed.
   Future<void> _openComposer({PostKind kind = PostKind.text}) async {
-    final post = await showCreatePostSheet(context, initialKind: kind);
-    if (!mounted || post == null) return;
-    setState(() => _posts.insert(0, post));
-    _toast('Your post is now live in the feed');
+    final draft = await showCreatePostSheet(context, initialKind: kind);
+    if (!mounted || draft == null) return;
+    try {
+      final created = await Api.instance.posts.create(fields: draft);
+      if (!mounted) return;
+      setState(() => _posts.insert(0, postFromJson(created)));
+      _toast('Your post is now live in the feed');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      final message = e.isForbidden
+          ? "You don't have permission to post to the feed."
+          : e.message;
+      _toast(message, icon: Icons.error_outline_rounded);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return ListView(
-      padding: const EdgeInsets.all(ArdentSpacing.s4),
-      children: [
-        _pinnedBanner(text),
-        const SizedBox(height: ArdentSpacing.s4),
-        _storiesRow(),
-        const SizedBox(height: ArdentSpacing.s2),
-        _composer(text),
-        const SizedBox(height: ArdentSpacing.s4),
-        for (final p in _posts) ...[
-          PostCard(post: p),
-          const SizedBox(height: ArdentSpacing.s4),
-        ],
-      ],
+    return AsyncView<void>(
+      loader: _loadFeed,
+      builder: (context, _, reload) {
+        final pinned = _posts.where((p) => p.pinned).cast<Post?>().firstWhere(
+              (p) => true,
+              orElse: () => null,
+            );
+        return RefreshIndicator(
+          onRefresh: reload,
+          child: ListView(
+            padding: const EdgeInsets.all(ArdentSpacing.s4),
+            children: [
+              if (pinned != null) ...[
+                _pinnedBanner(text, pinned),
+                const SizedBox(height: ArdentSpacing.s4),
+              ],
+              _storiesRow(),
+              const SizedBox(height: ArdentSpacing.s2),
+              _composer(text),
+              const SizedBox(height: ArdentSpacing.s4),
+              if (_posts.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: ArdentSpacing.s8),
+                  child: EmptyState(
+                      message: 'No posts yet. Be the first to share something.',
+                      icon: Icons.dynamic_feed_rounded),
+                )
+              else
+                for (final p in _posts) ...[
+                  PostCard(post: p),
+                  const SizedBox(height: ArdentSpacing.s4),
+                ],
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _pinnedBanner(TextTheme text) {
+  Widget _pinnedBanner(TextTheme text, Post pinned) {
+    final label = pinned.title.isNotEmpty ? pinned.title : pinned.text;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -83,14 +131,15 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: ArdentSpacing.s3),
           Expanded(
             child: RichText(
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               text: TextSpan(
                 style: text.bodyMedium?.copyWith(color: ArdentColors.navy900, height: 1.4),
-                children: const [
-                  TextSpan(
+                children: [
+                  const TextSpan(
                       text: 'Pinned announcement: ',
                       style: TextStyle(fontWeight: FontWeight.w700)),
-                  TextSpan(
-                      text: "Ardent's First Houses' Sportsfest 2026 — details below."),
+                  TextSpan(text: label),
                 ],
               ),
             ),
@@ -108,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           _addStory(),
           const SizedBox(width: 10),
-          for (final s in Seed.stories) ...[
+          for (final s in _stories) ...[
             _story(s),
             const SizedBox(width: 10),
           ],
@@ -145,7 +194,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _story(Story s) {
-    return SizedBox(
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => StoryViewerScreen(story: s)),
+      ),
+      child: SizedBox(
       width: 76,
       child: Column(
         children: [
@@ -174,19 +227,18 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
   Widget _composer(TextTheme text) {
+    final me = AppSession.instance.me;
     return SurfaceCard(
       child: Column(
         children: [
           Row(
             children: [
-              DsAvatar(
-                  initials: Seed.currentUser.initials,
-                  color: Seed.currentUser.color,
-                  size: 40),
+              DsAvatar(initials: me.initials, color: me.color, size: 40),
               const SizedBox(width: ArdentSpacing.s3),
               Expanded(
                 child: InkWell(

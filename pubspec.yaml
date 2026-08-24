@@ -38,6 +38,17 @@ dependencies:
   # Montserrat (Ardent Networks display/body typeface), served via Google Fonts.
   google_fonts: ^6.2.1
 
+  # Networking layer for the Ardent Community backend API (see lib/api/).
+  http: ^1.2.2
+  # MediaType for multipart upload content-types (also a dep of http).
+  http_parser: ^4.0.2
+  # Secure, OS-backed storage for the auth JWT (iOS Keychain / Android Keystore).
+  flutter_secure_storage: ^9.2.2
+  # Loads the .env file (API_BASE_URL) at runtime.
+  flutter_dotenv: ^5.1.0
+  # Realtime presence + group chat over Socket.IO.
+  socket_io_client: ^2.0.3+1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -59,6 +70,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Bundle the .env file so flutter_dotenv can read API_BASE_URL at runtime.
+  assets:
+    - .env
 
   # To add assets to your application, add an assets section, like this:
   # assets:

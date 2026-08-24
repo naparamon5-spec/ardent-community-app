@@ -1,6 +1,10 @@
-import 'package:flutter/material.dart';
+import 'dart:ui' as ui;
 
-import '../data/seed.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+
+import '../api/api.dart';
+import '../api/session.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 
@@ -16,7 +20,9 @@ class StoryComposerScreen extends StatefulWidget {
 
 class _StoryComposerScreenState extends State<StoryComposerScreen> {
   final _caption = TextEditingController();
+  final _previewKey = GlobalKey();
   int _bg = 0;
+  bool _sharing = false;
 
   static const _backgrounds = <List<Color>>[
     [ArdentColors.brandCoral, ArdentColors.accent, ArdentColors.red800],
@@ -32,19 +38,41 @@ class _StoryComposerScreenState extends State<StoryComposerScreen> {
     super.dispose();
   }
 
-  void _share() {
-    // Capture the messenger before popping — after pop this context is
-    // deactivated and looking up inherited widgets through it is invalid.
+  /// Rasterises the gradient+caption preview to a PNG and posts it as story
+  /// media (`POST /stories`, which requires at least one media file).
+  Future<void> _share() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
     final messenger = ScaffoldMessenger.of(context);
-    Navigator.of(context).pop();
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Your story was shared')),
-    );
+    final navigator = Navigator.of(context);
+    try {
+      final boundary = _previewKey.currentContext!.findRenderObject()
+          as RenderRepaintBoundary;
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData!.buffer.asUint8List();
+      await Api.instance.stories.create(
+        media: [storyMedia(bytes: bytes, filename: 'story.png', contentType: 'image/png')],
+        fields: {if (_caption.text.trim().isNotEmpty) 'caption': _caption.text.trim()},
+      );
+      navigator.pop();
+      messenger.showSnackBar(const SnackBar(content: Text('Your story was shared')));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _sharing = false);
+      messenger.showSnackBar(SnackBar(
+          content: Text(e.isForbidden ? "You can't post stories." : e.message)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _sharing = false);
+      messenger.showSnackBar(
+          const SnackBar(content: Text("Couldn't share your story. Try again.")));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final me = Seed.currentUser;
+    final me = AppSession.instance.me;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -60,7 +88,9 @@ class _StoryComposerScreenState extends State<StoryComposerScreen> {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(ArdentSpacing.s4),
-              child: Container(
+              child: RepaintBoundary(
+                key: _previewKey,
+                child: Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -109,6 +139,7 @@ class _StoryComposerScreenState extends State<StoryComposerScreen> {
                     ),
                   ],
                 ),
+              ),
               ),
             ),
           ),
@@ -168,8 +199,14 @@ class _StoryComposerScreenState extends State<StoryComposerScreen> {
                   ),
                   const SizedBox(width: ArdentSpacing.s3),
                   ElevatedButton.icon(
-                    onPressed: _share,
-                    icon: const Icon(Icons.send_rounded, size: 16),
+                    onPressed: _sharing ? null : _share,
+                    icon: _sharing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.send_rounded, size: 16),
                     label: const Text('Share'),
                   ),
                 ],

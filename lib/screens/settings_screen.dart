@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/session.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 import 'edit_profile_screen.dart';
@@ -96,7 +97,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (!mounted) return;
-    if (ok == true) _toast('Logged out (demo)');
+    if (ok == true) {
+      await AppSession.instance.signOut();
+      // The AuthGate listens to the auth store and swaps in the login screen;
+      // pop settings so we don't leave it stacked over the gate.
+      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+    }
   }
 
   Widget _section(String title) => Padding(
