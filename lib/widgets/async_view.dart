@@ -29,7 +29,10 @@ class _AsyncViewState<T> extends State<AsyncView<T>> {
 
   Future<void> _reload() async {
     final next = widget.loader();
-    setState(() => _future = next);
+    // Block body: an arrow body would *return* the Future, which setState rejects.
+    setState(() {
+      _future = next;
+    });
     // Await completion so the RefreshIndicator spinner clears; the FutureBuilder
     // renders any error itself, so swallow it here rather than rethrowing.
     try {

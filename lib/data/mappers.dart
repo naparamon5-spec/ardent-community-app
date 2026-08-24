@@ -124,6 +124,15 @@ String relativeTime(dynamic iso) {
   return '${_months[dt.month - 1]} ${dt.day}';
 }
 
+/// A plain `YYYY-MM-DD` label (used for appraisal cycle periods).
+String relativeDateOnly(dynamic iso) {
+  final dt = _parseDate(iso);
+  if (dt == null) return '';
+  final m = dt.month.toString().padLeft(2, '0');
+  final d = dt.day.toString().padLeft(2, '0');
+  return '${dt.year}-$m-$d';
+}
+
 /// A calendar label like `Mar 2024` (used for hire/join dates).
 String relativeDate(dynamic iso) {
   final dt = _parseDate(iso);
@@ -165,6 +174,10 @@ Person personFromJson(dynamic value) {
     online: online,
     lastActive: _str(_pick(json, ['lastActive', 'lastSeen']),
         online ? 'Active now' : 'Active recently'),
+    email: _str(_pick(json, ['email', 'workEmail'])),
+    department: _str(_pick(json, ['department', 'dept'])),
+    location: _str(_pick(json, ['location'])),
+    bio: _str(_pick(json, ['bio', 'about'])),
   );
 }
 
@@ -377,7 +390,38 @@ EventItem eventFromJson(dynamic value) {
     attendees: _int(going),
     interested: _int(_pick(json, ['interested', 'interestedCount'])),
     featured: _bool(_pick(json, ['featured', 'isFeatured'])),
+    myRsvp: _rsvpStatus(_pick(json, ['myRsvp', 'rsvp', 'viewerRsvp', 'myStatus'])),
+    startAt: start,
+    endAt: end,
+    creatorId: _entityId(_pick(json,
+        ['creatorId', 'createdById', 'organizerId', 'ownerId', 'userId']) ??
+        _pick(json, ['createdBy', 'organizer', 'owner', 'author', 'creator', 'user'])),
+    canManage: _bool(_pick(json, ['canManage', 'canEdit', 'isOwner', 'mine'])),
+    coverUrl: _coverUrl(json),
   );
+}
+
+String _coverUrl(Map json) {
+  final direct = _mediaItem(_pick(json, ['coverUrl', 'cover', 'image', 'imageUrl', 'banner']));
+  if (direct != null && direct.isImage) return direct.url;
+  final img = mediaFromJson(json).where((m) => m.isImage).cast<MediaItem?>().firstWhere(
+        (_) => true,
+        orElse: () => null,
+      );
+  return img?.url ?? '';
+}
+
+/// Extracts an id from either a bare id value or an embedded user/entity object.
+String _entityId(dynamic v) {
+  if (v == null) return '';
+  if (v is Map) return _str(_pick(v, ['id', '_id', 'slug']));
+  return _str(v);
+}
+
+String _rsvpStatus(dynamic v) {
+  final s = '${v is Map ? _pick(v, ['status']) : v}'.toLowerCase();
+  if (s == 'going' || s == 'interested') return s;
+  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -399,15 +443,25 @@ Listing listingFromJson(dynamic value) {
   final free = _bool(_pick(json, ['free', 'isFree'])) ||
       (_pick(json, ['priceCents']) != null && _int(_pick(json, ['priceCents'])) == 0);
   final category = _pick(json, ['category']);
+  final seller = personFromJson(_pick(json, ['seller', 'owner', 'user', 'author']));
+  final images = mediaFromJson(json).where((m) => m.isImage);
   return Listing(
     id: id,
     title: _str(_pick(json, ['title', 'name'])),
     price: _priceLabel(json, free: free),
     category: category is Map ? _str(_pick(category, ['name'])) : _str(category, 'Other'),
-    seller: personFromJson(_pick(json, ['seller', 'owner', 'user', 'author'])).name,
-    color: avatarColorFor(id),
+    seller: seller.name,
+    sellerId: seller.id,
+    color: avatarColorFor(seller.id.isNotEmpty ? seller.id : id),
     free: free,
-  );
+    description: _str(_pick(json, ['description', 'desc'])),
+    likeCount: _int(_pick(json, ['likeCount', 'likes', 'likesCount'])),
+    sold: _bool(_pick(json, ['sold', 'isSold'])),
+    posted: relativeTime(_pick(json, ['createdAt', 'created_at', 'postedAt'])),
+    coverUrl: images.isEmpty ? '' : images.first.url,
+  )
+    ..liked = _bool(_pick(json, ['likedByMe', 'liked']))
+    ..saved = _bool(_pick(json, ['savedByMe', 'saved']));
 }
 
 // ---------------------------------------------------------------------------

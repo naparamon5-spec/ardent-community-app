@@ -15,6 +15,10 @@ class Person {
     required this.color,
     this.online = false,
     this.lastActive = 'Active recently',
+    this.email = '',
+    this.department = '',
+    this.location = '',
+    this.bio = '',
   });
 
   final String id;
@@ -24,6 +28,10 @@ class Person {
   final Color color;
   final bool online;
   final String lastActive;
+  final String email;
+  final String department;
+  final String location;
+  final String bio;
 }
 
 class Reaction {
@@ -150,6 +158,12 @@ class EventItem {
     required this.attendees,
     this.interested = 0,
     this.featured = false,
+    this.myRsvp = '',
+    this.startAt,
+    this.endAt,
+    this.creatorId = '',
+    this.canManage = false,
+    this.coverUrl = '',
   });
 
   final String id;
@@ -163,6 +177,20 @@ class EventItem {
   final int attendees;
   final int interested;
   final bool featured;
+
+  /// The viewer's RSVP: `going`, `interested`, or `` (none).
+  final String myRsvp;
+
+  /// Raw start/end for editing (the display strings above are derived).
+  final DateTime? startAt;
+  final DateTime? endAt;
+
+  /// Creator id and whether the server says the viewer may edit/delete.
+  final String creatorId;
+  final bool canManage;
+
+  /// Optional cover image URL (absolute).
+  final String coverUrl;
 }
 
 class Group {
@@ -193,7 +221,7 @@ class Group {
 }
 
 class Listing {
-  const Listing({
+  Listing({
     this.id = '',
     required this.title,
     required this.price,
@@ -201,6 +229,14 @@ class Listing {
     required this.seller,
     required this.color,
     this.free = false,
+    this.description = '',
+    this.sellerId = '',
+    this.likeCount = 0,
+    this.sold = false,
+    this.posted = '',
+    this.coverUrl = '',
+    this.liked = false,
+    this.saved = false,
   });
   final String id;
   final String title;
@@ -209,6 +245,14 @@ class Listing {
   final String seller;
   final Color color;
   final bool free;
+  final String description;
+  final String sellerId;
+  int likeCount;
+  final bool sold;
+  final String posted;
+  final String coverUrl;
+  bool liked;
+  bool saved;
 }
 
 class Story {

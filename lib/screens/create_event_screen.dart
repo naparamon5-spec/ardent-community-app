@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../api/api.dart';
+import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 
-/// Create an event — form backed by `POST /events` (requires
-/// `module:events.create`). Returns `true` on success so the caller can refresh.
+/// Create or edit an event — backed by `POST /events` / `PATCH /events/:id`.
+/// Pass [initial] to edit an existing event. Returns `true` on success so the
+/// caller can refresh.
 class CreateEventScreen extends StatefulWidget {
-  const CreateEventScreen({super.key});
+  const CreateEventScreen({super.key, this.initial});
+
+  final EventItem? initial;
 
   @override
   State<CreateEventScreen> createState() => _CreateEventScreenState();
@@ -15,12 +19,15 @@ class CreateEventScreen extends StatefulWidget {
 
 class _CreateEventScreenState extends State<CreateEventScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _title = TextEditingController();
-  final _description = TextEditingController();
-  final _location = TextEditingController();
-  DateTime? _start;
-  DateTime? _end;
+  late final _title = TextEditingController(text: widget.initial?.title ?? '');
+  late final _description = TextEditingController(text: widget.initial?.desc ?? '');
+  late final _location = TextEditingController(text: widget.initial?.location ?? '');
+  late DateTime? _start = widget.initial?.startAt;
+  late DateTime? _end = widget.initial?.endAt;
+  late bool _featured = widget.initial?.featured ?? false;
   bool _submitting = false;
+
+  bool get _isEdit => widget.initial != null;
 
   @override
   void dispose() {
@@ -79,22 +86,29 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     setState(() => _submitting = true);
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
+    final fields = {
+      'title': _title.text.trim(),
+      'description': _description.text.trim(),
+      'location': _location.text.trim(),
+      'startsAt': _start!.toUtc().toIso8601String(),
+      if (_end != null) 'endsAt': _end!.toUtc().toIso8601String(),
+      'featured': _featured,
+    };
     try {
-      await Api.instance.events.create(fields: {
-        'title': _title.text.trim(),
-        if (_description.text.trim().isNotEmpty) 'description': _description.text.trim(),
-        if (_location.text.trim().isNotEmpty) 'location': _location.text.trim(),
-        'startsAt': _start!.toUtc().toIso8601String(),
-        if (_end != null) 'endsAt': _end!.toUtc().toIso8601String(),
-      });
+      if (_isEdit) {
+        await Api.instance.events.update(widget.initial!.id, fields: fields);
+      } else {
+        await Api.instance.events.create(fields: fields);
+      }
       navigator.pop(true);
-      messenger.showSnackBar(const SnackBar(content: Text('Event created')));
+      messenger.showSnackBar(
+          SnackBar(content: Text(_isEdit ? 'Event updated' : 'Event created')));
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
       messenger.showSnackBar(SnackBar(
           content: Text(e.isForbidden
-              ? "You don't have permission to create events."
+              ? "You don't have permission to ${_isEdit ? 'edit' : 'create'} events."
               : e.message)));
     }
   }
@@ -103,14 +117,14 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create event'),
+        title: Text(_isEdit ? 'Edit event' : 'Create event'),
         actions: [
           TextButton(
             onPressed: _submitting ? null : _submit,
             child: _submitting
                 ? const SizedBox(
                     width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Create'),
+                : Text(_isEdit ? 'Save' : 'Create'),
           ),
         ],
       ),
@@ -147,11 +161,13 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             const SizedBox(height: ArdentSpacing.s3),
             _label('Ends (optional)'),
             _dateTile(_end, () => _pickDateTime(isStart: false), 'Pick end date & time'),
+            const SizedBox(height: ArdentSpacing.s4),
+            _featureTile(),
             const SizedBox(height: ArdentSpacing.s6),
             ElevatedButton(
               onPressed: _submitting ? null : _submit,
               style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-              child: const Text('Create event'),
+              child: Text(_isEdit ? 'Save changes' : 'Create event'),
             ),
           ],
         ),
@@ -163,6 +179,55 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
         padding: const EdgeInsets.only(bottom: 6, left: 2),
         child: Overline(text),
       );
+
+  /// "Feature this event" — mirrors the web toggle. Note: the backend forces
+  /// this to false unless the caller has the admin.users module.
+  Widget _featureTile() {
+    return InkWell(
+      onTap: () => setState(() => _featured = !_featured),
+      borderRadius: BorderRadius.circular(ArdentRadii.md),
+      child: Container(
+        padding: const EdgeInsets.all(ArdentSpacing.s3),
+        decoration: BoxDecoration(
+          color: _featured ? ArdentColors.accentSoft : ArdentColors.bgSubtle,
+          borderRadius: BorderRadius.circular(ArdentRadii.md),
+          border: Border.all(
+              color: _featured ? ArdentColors.red100 : ArdentColors.border),
+        ),
+        child: Row(
+          children: [
+            Checkbox(
+              value: _featured,
+              onChanged: (v) => setState(() => _featured = v ?? false),
+              activeColor: ArdentColors.accent,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            const SizedBox(width: ArdentSpacing.s2),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Feature this event',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: ArdentColors.fg1)),
+                  SizedBox(height: 2),
+                  Text('Pin it to the top of the Events page as the highlight.',
+                      style: TextStyle(fontSize: 12, color: ArdentColors.fg3)),
+                ],
+              ),
+            ),
+            const SizedBox(width: ArdentSpacing.s2),
+            Icon(Icons.local_offer_rounded,
+                size: 18,
+                color: _featured ? ArdentColors.accent : ArdentColors.fg3),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _dateTile(DateTime? value, VoidCallback onTap, String hint) {
     final text = Theme.of(context).textTheme;
