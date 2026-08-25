@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
 import '../api/session.dart';
+import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
@@ -32,9 +34,6 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
   int _index = 0; // media index within the current story
   late int _storyIndex; // which person's story
 
-  /// Per-story reaction the viewer has sent (local), keyed by story index.
-  final Map<int, String> _reactions = {};
-
   /// Story keys the viewer has seen, returned to the feed to grey their rings.
   final Set<String> _viewed = {};
 
@@ -43,11 +42,27 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     super.initState();
     _storyIndex = widget.initialIndex.clamp(0, widget.stories.length - 1);
     _markViewed();
+    _onMediaShown();
   }
 
   Story get story => widget.stories[_storyIndex];
   List<MediaItem> get _media => story.media;
-  String? get _myReaction => _reactions[_storyIndex];
+  MediaItem? get _currentMedia =>
+      (_index >= 0 && _index < _media.length) ? _media[_index] : null;
+
+  /// Whether this is the signed-in user's own My Day.
+  bool get _isMine =>
+      story.isMine ||
+      (story.authorId.isNotEmpty &&
+          story.authorId == AppSession.instance.me.id);
+
+  /// Records a view for the current item (someone else's story only).
+  void _onMediaShown() {
+    if (_isMine) return;
+    final m = _currentMedia;
+    if (m == null || story.id.isEmpty || m.id.isEmpty) return;
+    Api.instance.stories.recordMediaView(story.id, m.id);
+  }
 
   String _storyKey(Story s) =>
       s.id.isNotEmpty ? s.id : '${s.name}|${s.initials}';
@@ -63,23 +78,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
       _index = 0;
     });
     _markViewed();
+    _onMediaShown();
   }
 
-  /// Whether this is the signed-in user's own My Day.
-  bool get _isMine {
-    final id = story.authorId;
-    return id.isNotEmpty && id == AppSession.instance.me.id;
-  }
-
-  /// Quick reactions offered when viewing someone else's story.
-  static const _quickReactions = <(String, String)>[
-    ('like', '👍'),
-    ('love', '❤️'),
-    ('haha', '😄'),
-    ('wow', '😮'),
-    ('sad', '😢'),
-    ('celebrate', '🎉'),
-  ];
+  /// Quick reactions offered when viewing someone else's story — the exact set
+  /// the API accepts.
+  static const _quickReactions = ['👍', '❤️', '😆', '😮', '😢', '🙏'];
 
   @override
   void dispose() {
@@ -140,7 +144,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                 ? _captionOnly(story.caption)
                 : PageView.builder(
                     controller: _controller,
-                    onPageChanged: (i) => setState(() => _index = i),
+                    onPageChanged: (i) {
+                      setState(() => _index = i);
+                      _onMediaShown();
+                    },
                     itemCount: _media.length,
                     itemBuilder: (context, i) => _page(_media[i]),
                   ),
@@ -282,9 +289,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
   // -------------------------------------------------------------------------
 
   Widget _seenBy(Story story) {
-    final seen = story.viewers.isNotEmpty ? story.viewers.length : story.seenCount;
+    final seen = _currentMedia?.viewCount ?? 0;
     return InkWell(
-      onTap: seen == 0 ? null : () => _openViewers(story),
+      onTap: seen == 0 ? null : _openViewers,
       borderRadius: BorderRadius.circular(ArdentRadii.pill),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
@@ -311,7 +318,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     );
   }
 
-  void _openViewers(Story story) {
+  /// Fetches and shows who watched the current item (author-only endpoint).
+  void _openViewers() {
+    final m = _currentMedia;
+    if (m == null || m.id.isEmpty) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: ArdentColors.bgSurface,
@@ -324,64 +334,83 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
         initialChildSize: 0.55,
         minChildSize: 0.35,
         maxChildSize: 0.9,
-        builder: (context, controller) {
-          final viewers = story.viewers;
-          return Column(
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: ArdentColors.border,
-                  borderRadius: BorderRadius.circular(999),
+        builder: (context, controller) => FutureBuilder<List<dynamic>>(
+          future: Api.instance.stories.mediaViewers(story.id, m.id),
+          builder: (context, snap) {
+            final loading =
+                snap.connectionState == ConnectionState.waiting;
+            final rows = snap.data ?? const [];
+            return Column(
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: ArdentColors.border,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.remove_red_eye_rounded,
-                        size: 18, color: ArdentColors.fg2),
-                    const SizedBox(width: 8),
-                    Text('Seen by ${story.seenCount}',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w700)),
-                  ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.remove_red_eye_rounded,
+                          size: 18, color: ArdentColors.fg2),
+                      const SizedBox(width: 8),
+                      Text('Seen by ${m.viewCount ?? rows.length}',
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: viewers.isEmpty
-                    ? ListView(
-                        controller: controller,
-                        children: const [
-                          SizedBox(height: 40),
-                          Center(
-                            child: Text('No viewer details available.',
-                                style: TextStyle(color: ArdentColors.fg3)),
-                          ),
-                        ],
-                      )
-                    : ListView.builder(
-                        controller: controller,
-                        itemCount: viewers.length,
-                        itemBuilder: (context, i) {
-                          final p = viewers[i];
-                          return ListTile(
-                            leading: DsAvatar(
-                                initials: p.initials, color: p.color, size: 40),
-                            title: Text(p.name,
-                                style:
-                                    const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: p.role.isNotEmpty ? Text(p.role) : null,
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
+                const Divider(height: 1),
+                Expanded(
+                  child: loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : rows.isEmpty
+                          ? ListView(
+                              controller: controller,
+                              children: const [
+                                SizedBox(height: 40),
+                                Center(
+                                  child: Text('No views yet.',
+                                      style:
+                                          TextStyle(color: ArdentColors.fg3)),
+                                ),
+                              ],
+                            )
+                          : ListView.builder(
+                              controller: controller,
+                              itemCount: rows.length,
+                              itemBuilder: (context, i) {
+                                final row = asMap(rows[i]);
+                                final p = personFromJson(
+                                    row['user'] ?? row['viewer'] ?? row);
+                                final reaction = '${row['reaction'] ??
+                                    row['emoji'] ?? ''}';
+                                return ListTile(
+                                  leading: DsAvatar(
+                                      initials: p.initials,
+                                      color: p.color,
+                                      size: 40),
+                                  title: Text(p.name,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600)),
+                                  subtitle:
+                                      p.role.isNotEmpty ? Text(p.role) : null,
+                                  trailing: reaction.isEmpty
+                                      ? null
+                                      : Text(reaction,
+                                          style: const TextStyle(fontSize: 20)),
+                                );
+                              },
+                            ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -391,31 +420,31 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
   // -------------------------------------------------------------------------
 
   Widget _reactionRow() {
+    final mine = _currentMedia?.myReaction;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (_myReaction != null)
+        if (mine != null && mine.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 8, left: 4),
-            child: Text('You reacted ${_emojiFor(_myReaction!)}',
+            child: Text('You reacted $mine',
                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            for (final (key, emoji) in _quickReactions)
-              _reactionChoice(key, emoji),
+            for (final emoji in _quickReactions) _reactionChoice(emoji),
           ],
         ),
       ],
     );
   }
 
-  Widget _reactionChoice(String key, String emoji) {
-    final active = _myReaction == key;
+  Widget _reactionChoice(String emoji) {
+    final active = _currentMedia?.myReaction == emoji;
     return GestureDetector(
-      onTap: () => _sendReaction(key),
+      onTap: () => _sendReaction(emoji),
       child: AnimatedScale(
         scale: active ? 1.25 : 1.0,
         duration: const Duration(milliseconds: 150),
@@ -433,29 +462,16 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     );
   }
 
-  String _emojiFor(String key) {
-    for (final (k, e) in _quickReactions) {
-      if (k == key) return e;
-    }
-    return '👍';
-  }
-
-  void _sendReaction(String key) {
-    final cleared = _reactions[_storyIndex] == key;
-    setState(() {
-      if (cleared) {
-        _reactions.remove(_storyIndex);
-      } else {
-        _reactions[_storyIndex] = key;
-      }
+  void _sendReaction(String emoji) {
+    final m = _currentMedia;
+    if (m == null || story.id.isEmpty || m.id.isEmpty) return;
+    final previous = m.myReaction;
+    // Toggle locally: same emoji clears it.
+    setState(() => m.myReaction = previous == emoji ? null : emoji);
+    Api.instance.stories.reactToMedia(story.id, m.id, emoji).catchError((_) {
+      if (mounted) setState(() => m.myReaction = previous);
+      return <String, dynamic>{};
     });
-    if (!cleared) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-            duration: const Duration(seconds: 1),
-            content: Text('Reacted ${_emojiFor(key)} to ${story.name}')));
-    }
   }
 
   String _currentCaption() {

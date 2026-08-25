@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../api_client.dart';
+import '../api_exception.dart';
 
 /// Stories (My-Day). See docs §Stories. Reads optional-auth; posting requires
 /// `module:stories.post`. Media uses the `storyUpload` preset (1–10 image/video
@@ -42,6 +43,37 @@ class StoriesService {
   /// `DELETE /stories/:id` — delete a story and all its media (owner or
   /// `admin.users`).
   Future<void> delete(String id) => _api.delete('/stories/$id');
+
+  /// `POST /stories/:id/media/:mediaId/view` — record that the caller saw this
+  /// item. Idempotent; a no-op on your own story. Best-effort.
+  Future<void> recordMediaView(String storyId, String mediaId) async {
+    if (mediaId.isEmpty) return;
+    try {
+      await _api.post('/stories/$storyId/media/$mediaId/view');
+    } on ApiException {
+      // Ignore — viewing shouldn't surface an error to the user.
+    }
+  }
+
+  /// `GET /stories/:id/media/:mediaId/viewers` — who watched this item and what
+  /// they reacted with. **Author-only** (403 otherwise). Returns the raw list.
+  Future<List<dynamic>> mediaViewers(String storyId, String mediaId) async {
+    final data = await _api.get('/stories/$storyId/media/$mediaId/viewers');
+    if (data is List) return data;
+    if (data is Map) {
+      final list = data['viewers'] ?? data['views'] ?? data['users'];
+      return list is List ? list : const [];
+    }
+    return const [];
+  }
+
+  /// `POST /stories/:id/media/:mediaId/react` — set/toggle your reaction to one
+  /// item (`emoji` ∈ 👍 ❤️ 😆 😮 😢 🙏); sending the same emoji clears it.
+  Future<Map<String, dynamic>> reactToMedia(
+          String storyId, String mediaId, String emoji) async =>
+      Map<String, dynamic>.from(await _api.post(
+          '/stories/$storyId/media/$mediaId/react',
+          body: {'emoji': emoji}) as Map);
 }
 
 /// Convenience builder for a story media file.

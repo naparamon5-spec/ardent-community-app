@@ -48,19 +48,31 @@ enum PostKind { text, announcement, kudos, poll, photo, file }
 /// A single piece of attached media (image, video, or document) on a post or
 /// story. [url] is already absolute (resolved against the API origin).
 class MediaItem {
-  const MediaItem({
+  MediaItem({
     required this.url,
     required this.type,
     this.caption,
     this.fileName,
+    this.id = '',
+    this.viewCount,
+    this.myReaction,
   });
 
+  /// Media item id — needed for the story view/react/viewers endpoints.
+  final String id;
   final String url;
 
   /// `image`, `video`, or `file`.
   final String type;
   final String? caption;
   final String? fileName;
+
+  /// Story media only: how many people saw this item (author-only; null
+  /// otherwise). Mutable so an optimistic self-view can bump it.
+  int? viewCount;
+
+  /// Story media only: the emoji the current viewer reacted with, if any.
+  String? myReaction;
 
   bool get isImage => type == 'image';
   bool get isVideo => type == 'video';
@@ -284,9 +296,7 @@ class Story {
     this.authorId = '',
     this.media = const [],
     this.caption = '',
-    this.seenCount = 0,
-    this.reactions = const [],
-    this.viewers = const [],
+    this.isMine = false,
   });
   final String id;
 
@@ -302,14 +312,9 @@ class Story {
   /// Story-level caption (some backends put the caption on the story itself).
   final String caption;
 
-  /// How many people have seen the story (owner-side "Seen by N").
-  final int seenCount;
-
-  /// Reaction type keys left on the story (e.g. `like`, `love`, `celebrate`).
-  final List<String> reactions;
-
-  /// Who has viewed the story (owner-side viewers list).
-  final List<Person> viewers;
+  /// Whether the signed-in viewer is the author (server-provided). When true,
+  /// each media[].viewCount is populated and the viewers endpoint is usable.
+  final bool isMine;
 }
 
 // ---- Reactions (web REACTIONS) ----

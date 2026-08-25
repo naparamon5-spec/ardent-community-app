@@ -213,13 +213,18 @@ MediaItem? _mediaItem(dynamic value) {
   if (rawUrl.isEmpty) return null;
   final type = _mediaType(rawUrl, _pick(m, ['type', 'mimeType', 'kind', 'contentType']));
   final name = _str(_pick(m, ['fileName', 'filename', 'name', 'originalName']));
+  final vc = _pick(m, ['viewCount', 'views', 'seenCount']);
+  final reaction = _pick(m, ['myReaction', 'reaction']);
   return MediaItem(
+    id: _str(_pick(m, ['id', '_id', 'mediaId'])),
     url: MediaService.resolve(rawUrl),
     type: type,
     caption: _str(_pick(m, ['caption', 'text'])).isEmpty
         ? null
         : _str(_pick(m, ['caption', 'text'])),
     fileName: name.isEmpty ? null : name,
+    viewCount: vc == null ? null : _int(vc),
+    myReaction: (reaction == null || '$reaction'.isEmpty) ? null : '$reaction',
   );
 }
 
@@ -510,56 +515,6 @@ Listing listingFromJson(dynamic value) {
 Story storyFromJson(dynamic value) {
   final json = asMap(value);
   final author = personFromJson(_pick(json, ['author', 'user', 'createdBy']));
-
-  // Views — the backend may express this several ways: a list of viewer
-  // objects, a plain count, or a nested `{ count, users }` object. Accept all.
-  final rawViewers = _pick(json, [
-    'viewers', 'seenBy', 'views', 'viewedBy', 'seenByUsers', 'storyViews',
-    'viewList', 'seenByList',
-  ]);
-  List<dynamic> viewerList = const [];
-  int seenCount = 0;
-  if (rawViewers is List) {
-    viewerList = rawViewers;
-    seenCount = rawViewers.length;
-  } else if (rawViewers is Map) {
-    // Nested shape: { count/total, users/list }.
-    final inner = _pick(rawViewers, ['users', 'list', 'items', 'viewers']);
-    if (inner is List) viewerList = inner;
-    seenCount = _int(_pick(rawViewers, ['count', 'total', 'unique']));
-    if (seenCount == 0 && viewerList.isNotEmpty) seenCount = viewerList.length;
-  }
-  // Fall back to any explicit count field.
-  if (seenCount == 0) {
-    seenCount = _int(_pick(json, [
-      'seenCount', 'viewsCount', 'viewCount', 'seenByCount', 'uniqueViews',
-      'totalViews', 'viewsTotal', 'numViews', 'viewerCount',
-    ]));
-  }
-  final viewers = <Person>[
-    for (final v in viewerList)
-      personFromJson(_pick(asMap(v), ['user', 'person', 'viewer']) ?? v),
-  ];
-
-  // Reactions — accept a list of reaction objects/strings, or a count map.
-  final rawReactions = _pick(json, ['reactions', 'reactionList']);
-  final reactions = <String>[];
-  if (rawReactions is List) {
-    for (final r in rawReactions) {
-      final type = r is Map
-          ? '${_pick(r, ['type', 'reaction', 'kind', 'emoji']) ?? ''}'
-          : '$r';
-      if (type.isNotEmpty) reactions.add(type);
-    }
-  } else if (rawReactions is Map) {
-    rawReactions.forEach((k, v) {
-      final n = _int(v);
-      for (var i = 0; i < n; i++) {
-        reactions.add('$k');
-      }
-    });
-  }
-
   return Story(
     author.name,
     author.initials,
@@ -568,9 +523,7 @@ Story storyFromJson(dynamic value) {
     authorId: author.id,
     media: mediaFromJson(json),
     caption: _str(_pick(json, ['caption', 'text'])),
-    seenCount: seenCount,
-    reactions: reactions,
-    viewers: viewers,
+    isMine: _bool(_pick(json, ['isMine', 'mine'])),
   );
 }
 
