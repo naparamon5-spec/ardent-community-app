@@ -20,10 +20,16 @@ class GroupChatScreen extends StatefulWidget {
 }
 
 class _ChatMessage {
-  _ChatMessage({required this.text, required this.author, required this.mine});
+  _ChatMessage({
+    required this.text,
+    required this.author,
+    required this.mine,
+    this.time,
+  });
   final String text;
-  final String author;
+  final Person author;
   final bool mine;
+  final DateTime? time;
 }
 
 class _GroupChatScreenState extends State<GroupChatScreen> {
@@ -58,10 +64,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   _ChatMessage _map(dynamic raw) {
     final m = asMap(raw);
     final author = personFromJson(m['author'] ?? m['user'] ?? m['sender']);
+    final t = m['createdAt'] ?? m['created_at'] ?? m['time'] ?? m['sentAt'];
     return _ChatMessage(
       text: (m['text'] ?? m['body'] ?? '').toString(),
-      author: author.name,
+      author: author,
       mine: author.id.isNotEmpty && author.id == AppSession.instance.me.id,
+      time: t == null ? null : DateTime.tryParse('$t')?.toLocal(),
     );
   }
 
@@ -139,8 +147,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Future<void> _send() async {
     final t = _ctrl.text.trim();
     if (t.isEmpty || _sending) return;
-    final optimistic =
-        _ChatMessage(text: t, author: AppSession.instance.me.name, mine: true);
+    final optimistic = _ChatMessage(
+        text: t,
+        author: AppSession.instance.me,
+        mine: true,
+        time: DateTime.now());
     setState(() {
       _messages = [..._messages, optimistic];
       _ctrl.clear();
@@ -220,13 +231,98 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       return const _CenteredMessage(
           icon: Icons.waving_hand_outlined, message: 'No messages yet. Say hello!');
     }
-    return ListView.builder(
-      controller: _scroll,
-      padding: const EdgeInsets.all(ArdentSpacing.s4),
-      itemCount: _messages.length,
-      itemBuilder: (context, i) =>
-          _bubble(_messages[i], showAuthor: !widget.group.isDirect),
+    return Container(
+      color: ArdentColors.bgApp,
+      child: ListView.builder(
+        controller: _scroll,
+        padding: const EdgeInsets.fromLTRB(
+            ArdentSpacing.s3, ArdentSpacing.s4, ArdentSpacing.s3, ArdentSpacing.s4),
+        itemCount: _messages.length,
+        itemBuilder: (context, i) {
+          final m = _messages[i];
+          final prev = i > 0 ? _messages[i - 1] : null;
+          final next = i < _messages.length - 1 ? _messages[i + 1] : null;
+
+          // Group consecutive messages by the same sender within ~5 minutes.
+          final firstInGroup = prev == null ||
+              prev.mine != m.mine ||
+              prev.author.id != m.author.id ||
+              _gap(prev.time, m.time);
+          final lastInGroup = next == null ||
+              next.mine != m.mine ||
+              next.author.id != m.author.id ||
+              _gap(m.time, next.time);
+
+          final newDay = prev == null || !_sameDay(prev.time, m.time);
+
+          return Column(
+            children: [
+              if (newDay) _daySeparator(m.time),
+              _bubble(
+                m,
+                showAuthor: !widget.group.isDirect && firstInGroup,
+                showAvatar: !m.mine && lastInGroup,
+                firstInGroup: firstInGroup,
+                lastInGroup: lastInGroup,
+              ),
+            ],
+          );
+        },
+      ),
     );
+  }
+
+  static bool _gap(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return false;
+    return b.difference(a).inMinutes.abs() >= 5;
+  }
+
+  static bool _sameDay(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return a == null && b == null;
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  Widget _daySeparator(DateTime? t) {
+    final label = _dayLabel(t);
+    if (label.isEmpty) return const SizedBox(height: 4);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: ArdentSpacing.s3),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(color: ArdentColors.border)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: ArdentColors.fg3)),
+          ),
+          const Expanded(child: Divider(color: ArdentColors.border)),
+        ],
+      ),
+    );
+  }
+
+  static String _dayLabel(DateTime? t) {
+    if (t == null) return '';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final that = DateTime(t.year, t.month, t.day);
+    final diff = today.difference(that).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[t.month - 1]} ${t.day}${t.year == now.year ? '' : ', ${t.year}'}';
+  }
+
+  static String _clock(DateTime t) {
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m ${t.hour < 12 ? 'AM' : 'PM'}';
   }
 
   Widget _joinPanel() {
@@ -298,46 +394,95 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
-  Widget _bubble(_ChatMessage m, {required bool showAuthor}) {
-    final radius = BorderRadius.only(
-      topLeft: const Radius.circular(ArdentRadii.lg),
-      topRight: const Radius.circular(ArdentRadii.lg),
-      bottomLeft: Radius.circular(m.mine ? ArdentRadii.lg : ArdentRadii.xs),
-      bottomRight: Radius.circular(m.mine ? ArdentRadii.xs : ArdentRadii.lg),
-    );
+  Widget _bubble(
+    _ChatMessage m, {
+    required bool showAuthor,
+    required bool showAvatar,
+    required bool firstInGroup,
+    required bool lastInGroup,
+  }) {
+    const big = Radius.circular(ArdentRadii.lg);
+    const small = Radius.circular(ArdentRadii.xs);
+    // Round the outer corners fully; flatten the "stacked" side within a group.
+    final radius = m.mine
+        ? BorderRadius.only(
+            topLeft: big,
+            bottomLeft: big,
+            topRight: firstInGroup ? big : small,
+            bottomRight: lastInGroup ? big : small,
+          )
+        : BorderRadius.only(
+            topRight: big,
+            bottomRight: big,
+            topLeft: firstInGroup ? big : small,
+            bottomLeft: lastInGroup ? big : small,
+          );
     final maxW = MediaQuery.of(context).size.width * 0.72;
-    return Align(
-      alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        constraints: BoxConstraints(maxWidth: maxW),
-        child: Column(
-          crossAxisAlignment:
-              m.mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            if (showAuthor && !m.mine)
-              Padding(
-                padding: const EdgeInsets.only(left: 6, bottom: 2),
-                child: Text(m.author,
-                    style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: ArdentColors.fg3)),
-              ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: m.mine ? ArdentColors.accent : ArdentColors.bgSubtle,
-                borderRadius: radius,
-              ),
-              child: Text(m.text,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: m.mine ? Colors.white : ArdentColors.fg1,
-                      height: 1.35)),
-            ),
-          ],
+
+    final bubble = Column(
+      crossAxisAlignment:
+          m.mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        if (showAuthor && !m.mine)
+          Padding(
+            padding: const EdgeInsets.only(left: 6, bottom: 3),
+            child: Text(m.author.name,
+                style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: m.author.color)),
+          ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            color: m.mine ? ArdentColors.accent : ArdentColors.bgSurface,
+            borderRadius: radius,
+            border: m.mine
+                ? null
+                : Border.all(color: ArdentColors.border),
+          ),
+          child: Text(m.text,
+              style: TextStyle(
+                  fontSize: 14.5,
+                  color: m.mine ? Colors.white : ArdentColors.fg1,
+                  height: 1.35)),
         ),
+        if (lastInGroup && m.time != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 3, left: 4, right: 4),
+            child: Text(_clock(m.time!),
+                style: const TextStyle(fontSize: 10.5, color: ArdentColors.fg3)),
+          ),
+      ],
+    );
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: lastInGroup ? 10 : 2),
+      child: Row(
+        mainAxisAlignment:
+            m.mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Incoming: reserve avatar gutter so grouped bubbles stay aligned.
+          if (!m.mine) ...[
+            SizedBox(
+              width: 30,
+              child: showAvatar
+                  ? DsAvatar(
+                      initials: m.author.initials,
+                      color: m.author.color,
+                      size: 28)
+                  : null,
+            ),
+            const SizedBox(width: 8),
+          ],
+          Flexible(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxW),
+              child: bubble,
+            ),
+          ),
+        ],
       ),
     );
   }

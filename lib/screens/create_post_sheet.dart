@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../api/api.dart';
 import '../api/session.dart';
+import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
@@ -39,22 +41,101 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
   final _annTitle = TextEditingController();
   bool _pinned = true;
 
+  // ---- @mention state ----
+  /// The active `@…` query being typed (null when not mentioning).
+  String? _mentionQuery;
+  List<Person> _mentionResults = const [];
+  int _mentionReqId = 0;
+
+  /// People inserted as mentions, so we can send their ids to the backend.
+  final List<Person> _mentioned = [];
+
   @override
   void initState() {
     super.initState();
-    _text.addListener(() => setState(() {}));
+    _text.addListener(_onTextChanged);
     _annTitle.addListener(() => setState(() {}));
     if (_kind == PostKind.photo) _photoAttached = true;
   }
 
   @override
   void dispose() {
+    _text.removeListener(_onTextChanged);
     _text.dispose();
     _kudosTo.dispose();
     _optionA.dispose();
     _optionB.dispose();
     _annTitle.dispose();
     super.dispose();
+  }
+
+  /// Detects an active `@…` token just before the caret and refreshes the
+  /// mention suggestions.
+  void _onTextChanged() {
+    setState(() {});
+    final sel = _text.selection;
+    String? query;
+    if (sel.isValid && sel.isCollapsed && sel.baseOffset >= 0) {
+      final upToCaret = _text.text.substring(0, sel.baseOffset);
+      final match = RegExp(r'(?:^|\s)@([\p{L}\p{N}._-]*)$', unicode: true)
+          .firstMatch(upToCaret);
+      if (match != null) query = match.group(1);
+    }
+    if (query == _mentionQuery) return;
+    setState(() => _mentionQuery = query);
+    if (query == null) {
+      setState(() => _mentionResults = const []);
+    } else {
+      _searchMentions(query);
+    }
+  }
+
+  Future<void> _searchMentions(String query) async {
+    final reqId = ++_mentionReqId;
+    try {
+      final raw = await Api.instance.users.list(search: query.isEmpty ? null : query);
+      if (!mounted || reqId != _mentionReqId) return;
+      setState(() =>
+          _mentionResults = raw.map(personFromJson).take(6).toList());
+    } catch (_) {
+      if (mounted && reqId == _mentionReqId) {
+        setState(() => _mentionResults = const []);
+      }
+    }
+  }
+
+  /// Replaces the active `@query` with `@Name ` and records the mention.
+  void _insertMention(Person p) {
+    final sel = _text.selection;
+    if (!sel.isValid || !sel.isCollapsed) return;
+    final caret = sel.baseOffset;
+    final upToCaret = _text.text.substring(0, caret);
+    final match =
+        RegExp(r'@([\p{L}\p{N}._-]*)$', unicode: true).firstMatch(upToCaret);
+    if (match == null) return;
+    final newText = _text.text.replaceRange(match.start, caret, '@${p.name} ');
+    final newCaret = match.start + p.name.length + 2;
+    _text.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newCaret),
+    );
+    if (!_mentioned.any((m) => m.id == p.id)) _mentioned.add(p);
+    setState(() {
+      _mentionQuery = null;
+      _mentionResults = const [];
+    });
+  }
+
+  /// Mentioned user ids whose `@Name` tag still appears in the text.
+  List<String> _activeMentionIds() {
+    final text = _text.text;
+    final ids = <String>[];
+    for (final p in _mentioned) {
+      if (p.id.isNotEmpty && text.contains('@${p.name}') && !ids.contains(p.id)) {
+        ids.add(p.id);
+      }
+    }
+    return ids;
   }
 
   bool get _canPost {
@@ -77,6 +158,8 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
     // docs/API_DOCUMENTATION.md. Photo posts need a real file (no image picker
     // wired yet), so a photo without an attachment is sent as a text post.
     final payload = <String, dynamic>{'text': text};
+    final mentions = _activeMentionIds();
+    if (mentions.isNotEmpty) payload['mentions'] = mentions;
     switch (_kind) {
       case PostKind.announcement:
         payload['type'] = 'announcement';
@@ -234,6 +317,8 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
                         contentPadding: EdgeInsets.zero,
                       ),
                     ),
+                    if (_mentionQuery != null && _mentionResults.isNotEmpty)
+                      _mentionSuggestions(text),
                     if (_kind == PostKind.photo) _photoTile(),
                     if (_kind == PostKind.poll) _pollFields(),
                   ],
@@ -267,6 +352,54 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Inline @mention picker shown under the compose field.
+  Widget _mentionSuggestions(TextTheme text) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: ArdentColors.bgSurface,
+        borderRadius: BorderRadius.circular(ArdentRadii.md),
+        border: Border.all(color: ArdentColors.border),
+      ),
+      child: Column(
+        children: [
+          for (final p in _mentionResults)
+            InkWell(
+              onTap: () => _insertMention(p),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    DsAvatar(initials: p.initials, color: p.color, size: 34),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(p.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 14)),
+                          if (p.role.isNotEmpty)
+                            Text(p.role,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: text.bodySmall),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.alternate_email_rounded,
+                        size: 16, color: ArdentColors.fg3),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -68,10 +68,13 @@ class MediaItem {
 }
 
 class PollOption {
-  PollOption(this.label, this.votes, {this.id = ''});
+  PollOption(this.label, this.votes, {this.id = '', this.voted = false});
   final String id;
   final String label;
   int votes;
+
+  /// Whether the current user's vote is on this option (single-select polls).
+  bool voted;
 }
 
 class Comment {
@@ -278,12 +281,17 @@ class Story {
     this.initials,
     this.color, {
     this.id = '',
+    this.authorId = '',
     this.media = const [],
     this.caption = '',
     this.seenCount = 0,
     this.reactions = const [],
+    this.viewers = const [],
   });
   final String id;
+
+  /// The story author's user id — used to tell "my story" from someone else's.
+  final String authorId;
   final String name;
   final String initials;
   final Color color;
@@ -299,6 +307,9 @@ class Story {
 
   /// Reaction type keys left on the story (e.g. `like`, `love`, `celebrate`).
   final List<String> reactions;
+
+  /// Who has viewed the story (owner-side viewers list).
+  final List<Person> viewers;
 }
 
 // ---- Reactions (web REACTIONS) ----

@@ -73,5 +73,12 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- image_picker: access the photo library / camera for My Day stories. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Allow access to your photos to share them to your My Day story.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Allow access to your camera to add photos or videos to your story.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Allow access to your microphone to record videos for your story.</string>
 </dict>
 </plist>

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/session.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
@@ -8,19 +9,77 @@ import '../widgets/ds.dart';
 /// the author header and caption overlaid. Tap the right/left edge to advance or
 /// go back; tap the ✕ (or swipe past the end) to close.
 class StoryViewerScreen extends StatefulWidget {
-  const StoryViewerScreen({super.key, required this.story});
+  const StoryViewerScreen({
+    super.key,
+    required this.stories,
+    this.initialIndex = 0,
+  });
 
-  final Story story;
+  /// Convenience for opening a single story.
+  StoryViewerScreen.single(Story story, {Key? key})
+      : this(key: key, stories: [story], initialIndex: 0);
+
+  /// All stories in the row, so the viewer can advance to the next person.
+  final List<Story> stories;
+  final int initialIndex;
 
   @override
   State<StoryViewerScreen> createState() => _StoryViewerScreenState();
 }
 
 class _StoryViewerScreenState extends State<StoryViewerScreen> {
-  final _controller = PageController();
-  int _index = 0;
+  PageController _controller = PageController();
+  int _index = 0; // media index within the current story
+  late int _storyIndex; // which person's story
 
-  List<MediaItem> get _media => widget.story.media;
+  /// Per-story reaction the viewer has sent (local), keyed by story index.
+  final Map<int, String> _reactions = {};
+
+  /// Story keys the viewer has seen, returned to the feed to grey their rings.
+  final Set<String> _viewed = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _storyIndex = widget.initialIndex.clamp(0, widget.stories.length - 1);
+    _markViewed();
+  }
+
+  Story get story => widget.stories[_storyIndex];
+  List<MediaItem> get _media => story.media;
+  String? get _myReaction => _reactions[_storyIndex];
+
+  String _storyKey(Story s) =>
+      s.id.isNotEmpty ? s.id : '${s.name}|${s.initials}';
+
+  void _markViewed() => _viewed.add(_storyKey(story));
+
+  /// Jumps to another person's story, resetting media paging.
+  void _goToStory(int i) {
+    _controller.dispose();
+    _controller = PageController();
+    setState(() {
+      _storyIndex = i;
+      _index = 0;
+    });
+    _markViewed();
+  }
+
+  /// Whether this is the signed-in user's own My Day.
+  bool get _isMine {
+    final id = story.authorId;
+    return id.isNotEmpty && id == AppSession.instance.me.id;
+  }
+
+  /// Quick reactions offered when viewing someone else's story.
+  static const _quickReactions = <(String, String)>[
+    ('like', '👍'),
+    ('love', '❤️'),
+    ('haha', '😄'),
+    ('wow', '😮'),
+    ('sad', '😢'),
+    ('celebrate', '🎉'),
+  ];
 
   @override
   void dispose() {
@@ -28,12 +87,33 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     super.dispose();
   }
 
+  void _close() => Navigator.of(context).maybePop(_viewed);
+
+  /// A circular arrow button for jumping between people's My Day.
+  Widget _navArrow(IconData icon, VoidCallback onTap) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(icon, size: 26, color: ArdentColors.navy900),
+        ),
+      ),
+    );
+  }
+
   void _next() {
     if (_index < _media.length - 1) {
       _controller.nextPage(
           duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    } else if (_storyIndex < widget.stories.length - 1) {
+      _goToStory(_storyIndex + 1); // advance to the next person's My Day
     } else {
-      Navigator.of(context).maybePop();
+      _close();
     }
   }
 
@@ -41,12 +121,14 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     if (_index > 0) {
       _controller.previousPage(
           duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    } else if (_storyIndex > 0) {
+      _goToStory(_storyIndex - 1); // back to the previous person's My Day
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final story = widget.story;
+    final story = this.story;
     final width = MediaQuery.of(context).size.width;
     return Scaffold(
       backgroundColor: Colors.black,
@@ -77,7 +159,28 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
               ],
             ),
           ),
-          // Progress segments.
+          // Previous / next PERSON arrows (Facebook My Day style).
+          if (_storyIndex > 0)
+            Positioned(
+              left: 10,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _navArrow(Icons.chevron_left_rounded,
+                    () => _goToStory(_storyIndex - 1)),
+              ),
+            ),
+          if (_storyIndex < widget.stories.length - 1)
+            Positioned(
+              right: 10,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _navArrow(Icons.chevron_right_rounded,
+                    () => _goToStory(_storyIndex + 1)),
+              ),
+            ),
+          // Progress segments — only shown when this person has multiple media.
           if (_media.length > 1)
             Positioned(
               top: 0,
@@ -130,7 +233,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.close_rounded, color: Colors.white),
-                      onPressed: () => Navigator.of(context).maybePop(),
+                      onPressed: _close,
                     ),
                   ],
                 ),
@@ -163,7 +266,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                               color: Colors.white, fontSize: 16, height: 1.35)),
                       const SizedBox(height: 14),
                     ],
-                    _seenAndReactions(story),
+                    if (_isMine) _seenBy(story) else _reactionRow(),
                   ],
                 ),
               ),
@@ -174,91 +277,191 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
     );
   }
 
-  /// Facebook MyDay-style footer: "Seen by N" on the left, reaction emojis on
-  /// the right.
-  Widget _seenAndReactions(Story story) {
-    final seen = story.seenCount;
-    final reactions = story.reactions;
-    // Distinct reaction emojis (up to 3), plus the total count.
-    final emojis = <String>[];
-    for (final r in reactions) {
-      final e = _reactionEmoji(r);
-      if (!emojis.contains(e)) emojis.add(e);
-      if (emojis.length == 3) break;
-    }
-    return Row(
-      children: [
-        const Icon(Icons.remove_red_eye_rounded,
-            color: Colors.white70, size: 18),
-        const SizedBox(width: 6),
-        Text(
-          seen == 0
-              ? 'No views yet'
-              : 'Seen by $seen ${seen == 1 ? 'person' : 'people'}',
-          style: const TextStyle(
-              color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+  // -------------------------------------------------------------------------
+  // Owner footer: "Seen by N" → tappable viewers list.
+  // -------------------------------------------------------------------------
+
+  Widget _seenBy(Story story) {
+    final seen = story.viewers.isNotEmpty ? story.viewers.length : story.seenCount;
+    return InkWell(
+      onTap: seen == 0 ? null : () => _openViewers(story),
+      borderRadius: BorderRadius.circular(ArdentRadii.pill),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            const Icon(Icons.remove_red_eye_rounded,
+                color: Colors.white70, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              seen == 0
+                  ? 'No views yet'
+                  : 'Seen by $seen ${seen == 1 ? 'person' : 'people'}',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            if (seen > 0) ...[
+              const SizedBox(width: 2),
+              const Icon(Icons.chevron_right_rounded,
+                  color: Colors.white70, size: 18),
+            ],
+          ],
         ),
-        const Spacer(),
-        if (reactions.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(ArdentRadii.pill),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final e in emojis)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 2),
-                    child: Text(e, style: const TextStyle(fontSize: 15)),
-                  ),
-                const SizedBox(width: 4),
-                Text('${reactions.length}',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700)),
-              ],
-            ),
+      ),
+    );
+  }
+
+  void _openViewers(Story story) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: ArdentColors.bgSurface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ArdentRadii.xl)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.55,
+        minChildSize: 0.35,
+        maxChildSize: 0.9,
+        builder: (context, controller) {
+          final viewers = story.viewers;
+          return Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: ArdentColors.border,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.remove_red_eye_rounded,
+                        size: 18, color: ArdentColors.fg2),
+                    const SizedBox(width: 8),
+                    Text('Seen by ${story.seenCount}',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: viewers.isEmpty
+                    ? ListView(
+                        controller: controller,
+                        children: const [
+                          SizedBox(height: 40),
+                          Center(
+                            child: Text('No viewer details available.',
+                                style: TextStyle(color: ArdentColors.fg3)),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        controller: controller,
+                        itemCount: viewers.length,
+                        itemBuilder: (context, i) {
+                          final p = viewers[i];
+                          return ListTile(
+                            leading: DsAvatar(
+                                initials: p.initials, color: p.color, size: 40),
+                            title: Text(p.name,
+                                style:
+                                    const TextStyle(fontWeight: FontWeight.w600)),
+                            subtitle: p.role.isNotEmpty ? Text(p.role) : null,
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Viewer footer (someone else's story): quick reactions.
+  // -------------------------------------------------------------------------
+
+  Widget _reactionRow() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_myReaction != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8, left: 4),
+            child: Text('You reacted ${_emojiFor(_myReaction!)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            for (final (key, emoji) in _quickReactions)
+              _reactionChoice(key, emoji),
+          ],
+        ),
       ],
     );
   }
 
-  String _reactionEmoji(String type) {
-    switch (type.toLowerCase()) {
-      case 'like':
-        return '👍';
-      case 'love':
-      case 'support':
-      case 'heart':
-        return '❤️';
-      case 'celebrate':
-      case 'party':
-        return '🎉';
-      case 'insightful':
-      case 'idea':
-        return '💡';
-      case 'haha':
-      case 'laugh':
-        return '😄';
-      case 'wow':
-        return '😮';
-      case 'sad':
-        return '😢';
-      case 'angry':
-        return '😠';
-      default:
-        return '👍';
+  Widget _reactionChoice(String key, String emoji) {
+    final active = _myReaction == key;
+    return GestureDetector(
+      onTap: () => _sendReaction(key),
+      child: AnimatedScale(
+        scale: active ? 1.25 : 1.0,
+        duration: const Duration(milliseconds: 150),
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: active
+              ? BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  shape: BoxShape.circle,
+                )
+              : null,
+          child: Text(emoji, style: const TextStyle(fontSize: 30)),
+        ),
+      ),
+    );
+  }
+
+  String _emojiFor(String key) {
+    for (final (k, e) in _quickReactions) {
+      if (k == key) return e;
+    }
+    return '👍';
+  }
+
+  void _sendReaction(String key) {
+    final cleared = _reactions[_storyIndex] == key;
+    setState(() {
+      if (cleared) {
+        _reactions.remove(_storyIndex);
+      } else {
+        _reactions[_storyIndex] = key;
+      }
+    });
+    if (!cleared) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+            duration: const Duration(seconds: 1),
+            content: Text('Reacted ${_emojiFor(key)} to ${story.name}')));
     }
   }
 
   String _currentCaption() {
-    if (_media.isEmpty) return widget.story.caption;
+    if (_media.isEmpty) return story.caption;
     final c = _media[_index].caption;
-    return (c == null || c.isEmpty) ? widget.story.caption : c;
+    return (c == null || c.isEmpty) ? story.caption : c;
   }
 
   Widget _page(MediaItem m) {

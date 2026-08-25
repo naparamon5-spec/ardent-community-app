@@ -138,13 +138,52 @@ class _PostCardState extends State<PostCard> {
     Overlay.of(context).insert(entry);
   }
 
+  /// Single-select vote: moves the caller's vote to [idx] (no-op if already
+  /// there). Optimistic, with rollback on failure.
   void _vote(int idx) {
     final option = post.pollOptions[idx];
-    setState(() => option.votes++);
+    if (option.voted) return; // already the current choice
+    final previous = post.pollOptions.indexWhere((o) => o.voted);
+    setState(() {
+      if (previous >= 0) {
+        post.pollOptions[previous].voted = false;
+        if (post.pollOptions[previous].votes > 0) post.pollOptions[previous].votes--;
+      }
+      option.voted = true;
+      option.votes++;
+    });
     if (option.id.isEmpty) return; // No server id available; local-only.
     Api.instance.posts.vote(post.id, option.id).catchError((_) {
-      if (mounted) setState(() => option.votes--);
+      if (mounted) {
+        setState(() {
+          option.voted = false;
+          if (option.votes > 0) option.votes--;
+          if (previous >= 0) {
+            post.pollOptions[previous].voted = true;
+            post.pollOptions[previous].votes++;
+          }
+        });
+      }
       return <String, dynamic>{};
+    });
+  }
+
+  /// Withdraws the caller's vote entirely.
+  void _removeVote() {
+    final idx = post.pollOptions.indexWhere((o) => o.voted);
+    if (idx < 0) return;
+    final option = post.pollOptions[idx];
+    setState(() {
+      option.voted = false;
+      if (option.votes > 0) option.votes--;
+    });
+    Api.instance.posts.removeVote(post.id).catchError((_) {
+      if (mounted) {
+        setState(() {
+          option.voted = true;
+          option.votes++;
+        });
+      }
     });
   }
 
@@ -549,33 +588,55 @@ class _PostCardState extends State<PostCard> {
 
   Widget _poll(TextTheme text) {
     final total = post.pollOptions.fold<int>(0, (s, o) => s + o.votes);
+    final hasVoted = post.pollOptions.any((o) => o.voted);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(post.text,
-            style: text.bodyLarge?.copyWith(
-                color: ArdentColors.fg1, fontWeight: FontWeight.w600)),
+            style: text.titleMedium?.copyWith(
+                color: ArdentColors.fg1, fontWeight: FontWeight.w700, fontSize: 16)),
         const SizedBox(height: ArdentSpacing.s1),
-        Text('Tap an option to vote · you can change your vote anytime',
+        Text('Select one · you can change or remove your vote anytime',
             style: text.bodySmall),
-        const SizedBox(height: ArdentSpacing.s2),
+        const SizedBox(height: ArdentSpacing.s3),
         for (var i = 0; i < post.pollOptions.length; i++)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: _pollOption(post.pollOptions[i], total, () => _vote(i)),
           ),
-        Text('$total vote${total == 1 ? '' : 's'}', style: text.bodySmall),
+        Row(
+          children: [
+            Text('$total vote${total == 1 ? '' : 's'}', style: text.bodySmall),
+            if (hasVoted) ...[
+              const SizedBox(width: ArdentSpacing.s3),
+              InkWell(
+                onTap: _removeVote,
+                borderRadius: BorderRadius.circular(ArdentRadii.sm),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 2),
+                  child: Text('Remove my vote',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: ArdentColors.accent)),
+                ),
+              ),
+            ],
+          ],
+        ),
       ],
     );
   }
 
   Widget _pollOption(PollOption opt, int total, VoidCallback onTap) {
     final pct = total == 0 ? 0.0 : opt.votes / total;
+    final selected = opt.voted;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(ArdentRadii.sm),
+      borderRadius: BorderRadius.circular(ArdentRadii.md),
       child: Stack(
         children: [
+          // Percentage fill.
           Positioned.fill(
             child: FractionallySizedBox(
               alignment: Alignment.centerLeft,
@@ -583,31 +644,54 @@ class _PostCardState extends State<PostCard> {
               child: Container(
                 decoration: BoxDecoration(
                   color: ArdentColors.accentSoft,
-                  borderRadius: BorderRadius.circular(ArdentRadii.sm),
+                  borderRadius: BorderRadius.circular(ArdentRadii.md),
                 ),
               ),
             ),
           ),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
             decoration: BoxDecoration(
-              border: Border.all(color: ArdentColors.borderStrong),
-              borderRadius: BorderRadius.circular(ArdentRadii.sm),
+              border: Border.all(
+                color: selected ? ArdentColors.accent : ArdentColors.border,
+                width: selected ? 1.5 : 1,
+              ),
+              borderRadius: BorderRadius.circular(ArdentRadii.md),
             ),
             child: Row(
               children: [
+                // Radio / selected check.
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: selected ? ArdentColors.accent : Colors.transparent,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected ? ArdentColors.accent : ArdentColors.borderStrong,
+                      width: 2,
+                    ),
+                  ),
+                  child: selected
+                      ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+                      : null,
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(opt.label,
-                      style: const TextStyle(fontSize: 13, color: ArdentColors.fg1)),
+                      style: TextStyle(
+                          fontSize: 14,
+                          color: ArdentColors.fg1,
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
                 ),
                 Text('${opt.votes}',
-                    style: const TextStyle(fontSize: 12, color: ArdentColors.fg3)),
+                    style: const TextStyle(fontSize: 12.5, color: ArdentColors.fg3)),
                 if (total > 0) ...[
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Text('${(pct * 100).round()}%',
                       style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w700, color: ArdentColors.fg1)),
+                          fontSize: 14, fontWeight: FontWeight.w700, color: ArdentColors.fg1)),
                 ],
               ],
             ),

@@ -303,6 +303,7 @@ PollOption _pollOption(dynamic value) {
     _str(_pick(m, ['label', 'text', 'option'])),
     _int(_pick(m, ['votes', 'voteCount', 'count'])),
     id: _str(_pick(m, ['id', '_id', 'optionId'])),
+    voted: _bool(_pick(m, ['votedByMe', 'myVote', 'selected', 'isVoted'])),
   );
 }
 
@@ -355,6 +356,14 @@ Post postFromJson(dynamic value) {
     fileName: fileName,
     fileSize: fileSize,
   );
+  // Poll-level "my vote" — mark the matching option when the backend reports a
+  // voted option id rather than a per-option flag.
+  final myVoteId = _str(_pick(json, ['votedOptionId', 'myVoteOptionId', 'myVote']));
+  if (myVoteId.isNotEmpty) {
+    for (final o in post.pollOptions) {
+      if (o.id == myVoteId) o.voted = true;
+    }
+  }
   // My own reaction (a type key like `like`/`support`), if any.
   final myReactionRaw = _pick(json, ['myReaction', 'reaction', 'userReaction']);
   post.myReaction = myReactionRaw is Map
@@ -502,11 +511,35 @@ Story storyFromJson(dynamic value) {
   final json = asMap(value);
   final author = personFromJson(_pick(json, ['author', 'user', 'createdBy']));
 
-  // Views — accept a count field, or the length of a viewers list.
-  final rawViewers = _pick(json, ['viewers', 'seenBy', 'views']);
-  final seenCount = rawViewers is List
-      ? rawViewers.length
-      : _int(_pick(json, ['seenCount', 'viewsCount', 'viewCount', 'seenByCount']));
+  // Views — the backend may express this several ways: a list of viewer
+  // objects, a plain count, or a nested `{ count, users }` object. Accept all.
+  final rawViewers = _pick(json, [
+    'viewers', 'seenBy', 'views', 'viewedBy', 'seenByUsers', 'storyViews',
+    'viewList', 'seenByList',
+  ]);
+  List<dynamic> viewerList = const [];
+  int seenCount = 0;
+  if (rawViewers is List) {
+    viewerList = rawViewers;
+    seenCount = rawViewers.length;
+  } else if (rawViewers is Map) {
+    // Nested shape: { count/total, users/list }.
+    final inner = _pick(rawViewers, ['users', 'list', 'items', 'viewers']);
+    if (inner is List) viewerList = inner;
+    seenCount = _int(_pick(rawViewers, ['count', 'total', 'unique']));
+    if (seenCount == 0 && viewerList.isNotEmpty) seenCount = viewerList.length;
+  }
+  // Fall back to any explicit count field.
+  if (seenCount == 0) {
+    seenCount = _int(_pick(json, [
+      'seenCount', 'viewsCount', 'viewCount', 'seenByCount', 'uniqueViews',
+      'totalViews', 'viewsTotal', 'numViews', 'viewerCount',
+    ]));
+  }
+  final viewers = <Person>[
+    for (final v in viewerList)
+      personFromJson(_pick(asMap(v), ['user', 'person', 'viewer']) ?? v),
+  ];
 
   // Reactions — accept a list of reaction objects/strings, or a count map.
   final rawReactions = _pick(json, ['reactions', 'reactionList']);
@@ -532,10 +565,12 @@ Story storyFromJson(dynamic value) {
     author.initials,
     author.color,
     id: _str(_pick(json, ['id', '_id'])),
+    authorId: author.id,
     media: mediaFromJson(json),
     caption: _str(_pick(json, ['caption', 'text'])),
     seenCount: seenCount,
     reactions: reactions,
+    viewers: viewers,
   );
 }
 

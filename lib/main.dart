@@ -158,6 +158,8 @@ class _AppShellState extends State<AppShell> {
       });
 
   bool _onScroll(UserScrollNotification n) {
+    // Hide-on-scroll only applies on Home; other tabs always keep the bar.
+    if (_index != 0) return false;
     // Ignore horizontal scrolls (e.g. the stories row).
     if (n.metrics.axis != Axis.vertical) return false;
     switch (n.direction) {
@@ -215,11 +217,12 @@ class _AppShellState extends State<AppShell> {
           body: KeyedSubtree(key: ValueKey(_index), child: tab.builder(context)),
         ),
       ),
+      // The bar only ever hides on Home; every other tab always shows it.
       bottomNavigationBar: AnimatedSize(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeInOut,
         alignment: Alignment.topCenter,
-        child: _navVisible
+        child: (_index != 0 || _navVisible)
             ? _ArdentBottomNav(
                 tabs: _tabs,
                 index: _index,

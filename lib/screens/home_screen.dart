@@ -262,10 +262,20 @@ class _HomeScreenState extends State<HomeScreen> {
         .firstWhere((m) => m != null && m.isImage, orElse: () => null);
     return GestureDetector(
       onTap: () async {
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => StoryViewerScreen(story: s)),
+        final start = _stories.indexOf(s);
+        final seen = await Navigator.of(context).push<Set<String>>(
+          MaterialPageRoute(
+            builder: (_) => StoryViewerScreen(
+              stories: _stories,
+              initialIndex: start < 0 ? 0 : start,
+            ),
+          ),
         );
-        if (mounted) setState(() => _viewedStories.add(_storyKey(s)));
+        if (!mounted) return;
+        setState(() {
+          _viewedStories.add(_storyKey(s));
+          if (seen != null) _viewedStories.addAll(seen);
+        });
       },
       child: Container(
         width: _storyW,
