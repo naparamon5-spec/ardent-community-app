@@ -143,6 +143,23 @@ class Post {
 
   bool liked = false;
   bool saved = false;
+
+  /// The current user's reaction key (`like`, `celebrate`, `support`,
+  /// `insightful`), or `null` if they haven't reacted.
+  String? myReaction;
+
+  /// Count of each reaction type left on the post, keyed by reaction key.
+  Map<String, int> reactionCounts = {};
+
+  /// Who reacted and with what — powers the "see who reacted" sheet.
+  List<PostReactor> reactors = [];
+}
+
+/// One person's reaction on a post (name + which reaction they left).
+class PostReactor {
+  const PostReactor(this.person, this.type);
+  final Person person;
+  final String type;
 }
 
 class EventItem {
@@ -263,6 +280,8 @@ class Story {
     this.id = '',
     this.media = const [],
     this.caption = '',
+    this.seenCount = 0,
+    this.reactions = const [],
   });
   final String id;
   final String name;
@@ -274,6 +293,12 @@ class Story {
 
   /// Story-level caption (some backends put the caption on the story itself).
   final String caption;
+
+  /// How many people have seen the story (owner-side "Seen by N").
+  final int seenCount;
+
+  /// Reaction type keys left on the story (e.g. `like`, `love`, `celebrate`).
+  final List<String> reactions;
 }
 
 // ---- Reactions (web REACTIONS) ----

@@ -25,6 +25,13 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Post> _posts = [];
   List<Story> _stories = [];
 
+  /// Keys of stories the user has already opened this session — their ring is
+  /// drawn gray (viewed) instead of the coloured gradient, but stays in the row.
+  final Set<String> _viewedStories = {};
+
+  String _storyKey(Story s) =>
+      s.id.isNotEmpty ? s.id : '${s.name}|${s.initials}';
+
   void _toast(String message, {IconData icon = Icons.check_circle_rounded}) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -89,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: ArdentSpacing.s4),
               ],
               _storiesRow(),
-              const SizedBox(height: ArdentSpacing.s2),
+              const SizedBox(height: ArdentSpacing.s3),
               _composer(text),
               const SizedBox(height: ArdentSpacing.s4),
               if (_posts.isEmpty)
@@ -151,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _storiesRow() {
     return SizedBox(
-      height: 92,
+      height: 160,
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
@@ -166,27 +173,82 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  static const double _storyW = 104;
+  static const double _storyH = 160;
+
   Widget _addStory() {
+    final me = AppSession.instance.me;
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const StoryComposerScreen()),
       ),
-      child: SizedBox(
-        width: 76,
-        child: Column(
+      child: Container(
+        width: _storyW,
+        height: _storyH,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(ArdentRadii.lg),
+          border: Border.all(color: ArdentColors.border),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: ArdentColors.accentSoft,
-                shape: BoxShape.circle,
-                border: Border.all(color: ArdentColors.accent, width: 1.5),
-              ),
-              child: const Icon(Icons.add_rounded, color: ArdentColors.accent),
+            Column(
+              children: [
+                // Top: the profile initial as the card background.
+                Expanded(
+                  child: Container(
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          me.color,
+                          Color.lerp(me.color, Colors.black, 0.30)!,
+                        ],
+                      ),
+                    ),
+                    child: Text(
+                      me.initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 34,
+                      ),
+                    ),
+                  ),
+                ),
+                // Bottom: white strip with the label.
+                Container(
+                  height: 46,
+                  width: double.infinity,
+                  color: ArdentColors.bgSurface,
+                  alignment: Alignment.bottomCenter,
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: const Text('Add update',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          color: ArdentColors.fg1)),
+                ),
+              ],
             ),
-            const SizedBox(height: 6),
-            Text('Add', style: Theme.of(context).textTheme.bodySmall),
+            // + badge straddling the boundary.
+            Positioned(
+              bottom: 34,
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: ArdentColors.accent,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                ),
+                child: const Icon(Icons.add_rounded, color: Colors.white, size: 20),
+              ),
+            ),
           ],
         ),
       ),
@@ -194,39 +256,92 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _story(Story s) {
+    final viewed = _viewedStories.contains(_storyKey(s));
+    final cover = s.media
+        .cast<MediaItem?>()
+        .firstWhere((m) => m != null && m.isImage, orElse: () => null);
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => StoryViewerScreen(story: s)),
-      ),
-      child: SizedBox(
-      width: 76,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(2.5),
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [ArdentColors.brandCoral, ArdentColors.accent, ArdentColors.red800],
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => StoryViewerScreen(story: s)),
+        );
+        if (mounted) setState(() => _viewedStories.add(_storyKey(s)));
+      },
+      child: Container(
+        width: _storyW,
+        height: _storyH,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(ArdentRadii.lg),
+          border: Border.all(color: ArdentColors.border),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Cover: story image if present, otherwise a branded gradient.
+            if (cover != null)
+              Image.network(cover.url, fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => _gradientCover(s))
+            else
+              _gradientCover(s),
+            // Bottom scrim for legible name.
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.center,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Color(0x99000000)],
+                ),
               ),
             ),
-            child: Container(
-              padding: const EdgeInsets.all(2),
-              decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-              child: DsAvatar(initials: s.initials, color: s.color, size: 56),
+            // Avatar ring — gray once viewed, coloured otherwise.
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: viewed ? ArdentColors.gray400 : ArdentColors.accent,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(1.5),
+                  decoration: const BoxDecoration(
+                      color: Colors.white, shape: BoxShape.circle),
+                  child: DsAvatar(initials: s.initials, color: s.color, size: 30),
+                ),
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            s.name.split(' ').first,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
+            // Name.
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 8,
+              child: Text(
+                s.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _gradientCover(Story s) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [s.color, Color.lerp(s.color, Colors.black, 0.35)!],
+        ),
       ),
     );
   }
@@ -270,17 +385,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () => _openComposer(kind: PostKind.photo)),
               ),
               Expanded(
-                child: _ComposerAction(Icons.bar_chart_rounded, 'Poll', ArdentColors.navy600,
+                child: _ComposerAction(Icons.attach_file_rounded, 'File',
+                    ArdentColors.navy600,
+                    onTap: () => _openComposer(kind: PostKind.file)),
+              ),
+              Expanded(
+                child: _ComposerAction(Icons.bar_chart_rounded, 'Poll',
+                    ArdentColors.navy500,
                     onTap: () => _openComposer(kind: PostKind.poll)),
               ),
               Expanded(
                 child: _ComposerAction(Icons.emoji_events_rounded, 'Kudos',
                     const Color(0xFFC77700),
                     onTap: () => _openComposer(kind: PostKind.kudos)),
-              ),
-              Expanded(
-                child: _ComposerAction(Icons.campaign_rounded, 'Announce', ArdentColors.accent,
-                    onTap: () => _openComposer(kind: PostKind.announcement)),
               ),
             ],
           ),

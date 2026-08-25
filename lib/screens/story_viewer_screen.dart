@@ -137,31 +137,122 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
               ),
             ),
           ),
-          // Caption overlay.
-          if (_currentCaption().isNotEmpty)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black87],
-                  ),
+          // Caption + "Seen by" / reactions footer.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black87],
                 ),
-                child: SafeArea(
-                  top: false,
-                  child: Text(_currentCaption(),
-                      style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.35)),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_currentCaption().isNotEmpty) ...[
+                      Text(_currentCaption(),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 16, height: 1.35)),
+                      const SizedBox(height: 14),
+                    ],
+                    _seenAndReactions(story),
+                  ],
                 ),
               ),
             ),
+          ),
         ],
       ),
     );
+  }
+
+  /// Facebook MyDay-style footer: "Seen by N" on the left, reaction emojis on
+  /// the right.
+  Widget _seenAndReactions(Story story) {
+    final seen = story.seenCount;
+    final reactions = story.reactions;
+    // Distinct reaction emojis (up to 3), plus the total count.
+    final emojis = <String>[];
+    for (final r in reactions) {
+      final e = _reactionEmoji(r);
+      if (!emojis.contains(e)) emojis.add(e);
+      if (emojis.length == 3) break;
+    }
+    return Row(
+      children: [
+        const Icon(Icons.remove_red_eye_rounded,
+            color: Colors.white70, size: 18),
+        const SizedBox(width: 6),
+        Text(
+          seen == 0
+              ? 'No views yet'
+              : 'Seen by $seen ${seen == 1 ? 'person' : 'people'}',
+          style: const TextStyle(
+              color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        const Spacer(),
+        if (reactions.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(ArdentRadii.pill),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final e in emojis)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Text(e, style: const TextStyle(fontSize: 15)),
+                  ),
+                const SizedBox(width: 4),
+                Text('${reactions.length}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _reactionEmoji(String type) {
+    switch (type.toLowerCase()) {
+      case 'like':
+        return '👍';
+      case 'love':
+      case 'support':
+      case 'heart':
+        return '❤️';
+      case 'celebrate':
+      case 'party':
+        return '🎉';
+      case 'insightful':
+      case 'idea':
+        return '💡';
+      case 'haha':
+      case 'laugh':
+        return '😄';
+      case 'wow':
+        return '😮';
+      case 'sad':
+        return '😢';
+      case 'angry':
+        return '😠';
+      default:
+        return '👍';
+    }
   }
 
   String _currentCaption() {

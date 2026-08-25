@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'api/api.dart';
@@ -147,7 +148,28 @@ class _AppShellState extends State<AppShell> {
         (_) => const ProfileScreen()),
   ];
 
-  void _goTab(int i) => setState(() => _index = i);
+  /// Whether the bottom nav is shown — hidden while scrolling content down,
+  /// revealed again on the first scroll up (Facebook behaviour).
+  bool _navVisible = true;
+
+  void _goTab(int i) => setState(() {
+        _index = i;
+        _navVisible = true; // always reveal when switching tabs
+      });
+
+  bool _onScroll(UserScrollNotification n) {
+    // Ignore horizontal scrolls (e.g. the stories row).
+    if (n.metrics.axis != Axis.vertical) return false;
+    switch (n.direction) {
+      case ScrollDirection.reverse: // dragging content up → hide
+        if (_navVisible) setState(() => _navVisible = false);
+      case ScrollDirection.forward: // dragging content down → show
+        if (!_navVisible) setState(() => _navVisible = true);
+      case ScrollDirection.idle:
+        break;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -156,7 +178,9 @@ class _AppShellState extends State<AppShell> {
       // NestedScrollView + a floating/snapping SliverAppBar gives the
       // Facebook behaviour: the bar slides away when scrolling down and comes
       // straight back on the first scroll up.
-      body: NestedScrollView(
+      body: NotificationListener<UserScrollNotification>(
+        onNotification: _onScroll,
+        child: NestedScrollView(
         floatHeaderSlivers: true,
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverAppBar(
@@ -186,21 +210,22 @@ class _AppShellState extends State<AppShell> {
             ],
           ),
         ],
-        // Key the body per-tab so switching tabs resets the scroll position
-        // instead of carrying one tab's offset into another.
-        body: KeyedSubtree(key: ValueKey(_index), child: tab.builder(context)),
+          // Key the body per-tab so switching tabs resets the scroll position
+          // instead of carrying one tab's offset into another.
+          body: KeyedSubtree(key: ValueKey(_index), child: tab.builder(context)),
+        ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _index,
-        onTap: _goTab,
-        items: [
-          for (final t in _tabs)
-            BottomNavigationBarItem(
-              icon: Icon(t.icon),
-              activeIcon: Icon(t.activeIcon),
-              label: t.title,
-            ),
-        ],
+      bottomNavigationBar: AnimatedSize(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeInOut,
+        alignment: Alignment.topCenter,
+        child: _navVisible
+            ? _ArdentBottomNav(
+                tabs: _tabs,
+                index: _index,
+                onTap: _goTab,
+              )
+            : const SizedBox(width: double.infinity),
       ),
     );
   }
@@ -230,6 +255,101 @@ class _AppShellState extends State<AppShell> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Custom bottom navigation — a clean white bar with an animated pill highlight
+/// behind the active tab, using the Ardent red accent.
+class _ArdentBottomNav extends StatelessWidget {
+  const _ArdentBottomNav(
+      {required this.tabs, required this.index, required this.onTap});
+
+  final List<_Tab> tabs;
+  final int index;
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: ArdentColors.bgSurface,
+        border: Border(top: BorderSide(color: ArdentColors.border)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x0F000000),
+            blurRadius: 12,
+            offset: Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: ArdentSpacing.s3, vertical: ArdentSpacing.s2),
+          child: Row(
+            children: [
+              for (int i = 0; i < tabs.length; i++)
+                Expanded(
+                  child: _NavItem(
+                    tab: tabs[i],
+                    active: i == index,
+                    onTap: () => onTap(i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem(
+      {required this.tab, required this.active, required this.onTap});
+
+  final _Tab tab;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? ArdentColors.accent : ArdentColors.fg3;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(ArdentRadii.pill),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+              decoration: BoxDecoration(
+                color: active ? ArdentColors.accentSoft : Colors.transparent,
+                borderRadius: BorderRadius.circular(ArdentRadii.pill),
+              ),
+              child: Icon(active ? tab.activeIcon : tab.icon,
+                  size: 24, color: color),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tab.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -355,8 +355,38 @@ Post postFromJson(dynamic value) {
     fileName: fileName,
     fileSize: fileSize,
   );
-  post.liked = _pick(json, ['myReaction', 'reaction']) != null ||
+  // My own reaction (a type key like `like`/`support`), if any.
+  final myReactionRaw = _pick(json, ['myReaction', 'reaction', 'userReaction']);
+  post.myReaction = myReactionRaw is Map
+      ? (_str(_pick(myReactionRaw, ['type', 'key'])).isEmpty
+          ? null
+          : _str(_pick(myReactionRaw, ['type', 'key'])))
+      : (myReactionRaw == null || '$myReactionRaw'.isEmpty ? null : '$myReactionRaw');
+  post.liked = post.myReaction != null ||
       _bool(_pick(json, ['likedByMe', 'liked']));
+  if (post.liked && post.myReaction == null) post.myReaction = 'like';
+
+  // Per-type counts, from a breakdown map when the backend provides one.
+  final counts = <String, int>{};
+  final breakdown = _pick(json, ['reactionCounts', 'reactionBreakdown', 'reactionsByType']);
+  if (breakdown is Map) {
+    breakdown.forEach((k, v) => counts['$k'] = _int(v));
+  }
+
+  // Reactor list: who reacted with what.
+  final reactors = <PostReactor>[];
+  final rawReactors = _pick(json, ['reactors', 'reactions', 'reactionList']);
+  if (rawReactors is List) {
+    for (final r in rawReactors) {
+      final rm = asMap(r);
+      final person = personFromJson(_pick(rm, ['user', 'person', 'author']) ?? rm);
+      final type = _str(_pick(rm, ['type', 'reaction', 'key']), 'like');
+      reactors.add(PostReactor(person, type));
+      if (breakdown is! Map) counts[type] = (counts[type] ?? 0) + 1;
+    }
+  }
+  post.reactionCounts = counts;
+  post.reactors = reactors;
   post.saved = _bool(_pick(json, ['savedByMe', 'saved']));
   return post;
 }
@@ -471,6 +501,32 @@ Listing listingFromJson(dynamic value) {
 Story storyFromJson(dynamic value) {
   final json = asMap(value);
   final author = personFromJson(_pick(json, ['author', 'user', 'createdBy']));
+
+  // Views — accept a count field, or the length of a viewers list.
+  final rawViewers = _pick(json, ['viewers', 'seenBy', 'views']);
+  final seenCount = rawViewers is List
+      ? rawViewers.length
+      : _int(_pick(json, ['seenCount', 'viewsCount', 'viewCount', 'seenByCount']));
+
+  // Reactions — accept a list of reaction objects/strings, or a count map.
+  final rawReactions = _pick(json, ['reactions', 'reactionList']);
+  final reactions = <String>[];
+  if (rawReactions is List) {
+    for (final r in rawReactions) {
+      final type = r is Map
+          ? '${_pick(r, ['type', 'reaction', 'kind', 'emoji']) ?? ''}'
+          : '$r';
+      if (type.isNotEmpty) reactions.add(type);
+    }
+  } else if (rawReactions is Map) {
+    rawReactions.forEach((k, v) {
+      final n = _int(v);
+      for (var i = 0; i < n; i++) {
+        reactions.add('$k');
+      }
+    });
+  }
+
   return Story(
     author.name,
     author.initials,
@@ -478,6 +534,8 @@ Story storyFromJson(dynamic value) {
     id: _str(_pick(json, ['id', '_id'])),
     media: mediaFromJson(json),
     caption: _str(_pick(json, ['caption', 'text'])),
+    seenCount: seenCount,
+    reactions: reactions,
   );
 }
 

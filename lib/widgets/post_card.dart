@@ -36,23 +36,106 @@ class _PostCardState extends State<PostCard> {
     super.dispose();
   }
 
-  void _toggleLike() {
+  /// Tapping the Like button toggles a plain 👍 (or clears the current one).
+  void _toggleLike() => _react(post.myReaction == null ? 'like' : null);
+
+  /// Applies [type] (or clears the reaction when [type] is null / re-selected),
+  /// updates the local counts optimistically, and persists to the backend.
+  void _react(String? type) {
+    final me = AppSession.instance.me;
+    final prev = post.myReaction;
+    if (prev == type) type = null; // re-selecting the same reaction removes it
+
     setState(() {
-      post.liked = !post.liked;
-      post.likeCount += post.liked ? 1 : -1;
+      if (prev != null) {
+        final n = (post.reactionCounts[prev] ?? 1) - 1;
+        if (n <= 0) {
+          post.reactionCounts.remove(prev);
+        } else {
+          post.reactionCounts[prev] = n;
+        }
+        post.reactors.removeWhere((r) => r.person.id == me.id && r.type == prev);
+        if (post.likeCount > 0) post.likeCount--;
+      }
+      post.myReaction = type;
+      if (type != null) {
+        post.reactionCounts[type] = (post.reactionCounts[type] ?? 0) + 1;
+        post.reactors.insert(0, PostReactor(me, type));
+        post.likeCount++;
+      }
+      post.liked = type != null;
     });
-    // Fire-and-forget; roll back on failure.
-    final liked = post.liked;
-    final future = liked
-        ? Api.instance.posts.setReaction(post.id, 'like')
-        : Api.instance.posts.removeReaction(post.id);
+
+    final applied = type;
+    final Future<void> future = applied == null
+        ? Api.instance.posts.removeReaction(post.id)
+        : Api.instance.posts.setReaction(post.id, applied);
     future.catchError((_) {
-      if (!mounted) return;
-      setState(() {
-        post.liked = !liked;
-        post.likeCount += post.liked ? 1 : -1;
-      });
+      // On failure, revert to the previous reaction.
+      if (mounted) setState(() => _revertReaction(prev, applied, me));
     });
+  }
+
+  void _revertReaction(String? prev, String? applied, Person me) {
+    if (applied != null) {
+      final n = (post.reactionCounts[applied] ?? 1) - 1;
+      if (n <= 0) {
+        post.reactionCounts.remove(applied);
+      } else {
+        post.reactionCounts[applied] = n;
+      }
+      post.reactors.removeWhere((r) => r.person.id == me.id && r.type == applied);
+      if (post.likeCount > 0) post.likeCount--;
+    }
+    post.myReaction = prev;
+    if (prev != null) {
+      post.reactionCounts[prev] = (post.reactionCounts[prev] ?? 0) + 1;
+      post.reactors.insert(0, PostReactor(me, prev));
+      post.likeCount++;
+    }
+    post.liked = prev != null;
+  }
+
+  /// Opens the floating reaction picker anchored above [anchorKey].
+  void _showReactionPicker(GlobalKey anchorKey) {
+    final box = anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null) return;
+    final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
+    final screenW = overlay.size.width;
+
+    late OverlayEntry entry;
+    void close() => entry.remove();
+    entry = OverlayEntry(
+      builder: (ctx) => Stack(
+        children: [
+          // Tap-outside barrier.
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: close,
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: screenW - topLeft.dx - 240 < 12 ? 12 : null,
+            top: topLeft.dy - 52,
+            child: Material(
+              color: Colors.transparent,
+              child: _ReactionBar(
+                selected: post.myReaction,
+                onPick: (key) {
+                  close();
+                  _react(key);
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context).insert(entry);
   }
 
   void _vote(int idx) {
@@ -722,31 +805,22 @@ class _PostCardState extends State<PostCard> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Expanded(
-            child: _actionButton(
-              post.liked ? Icons.thumb_up_alt_rounded : Icons.thumb_up_alt_outlined,
-              'Like · ${post.likeCount}',
-              color: post.liked ? ArdentColors.accent : ArdentColors.fg2,
-              onTap: _toggleLike,
-            ),
+          _likeButton(),
+          const SizedBox(width: 4),
+          _iconAction(
+            Icons.mode_comment_outlined,
+            count: post.comments.length,
+            onTap: () => setState(() => _commentsOpen = !_commentsOpen),
           ),
-          Expanded(
-            child: _actionButton(
-              Icons.mode_comment_outlined,
-              'Comment · ${post.comments.length}',
-              onTap: () => setState(() => _commentsOpen = !_commentsOpen),
-            ),
+          const SizedBox(width: 4),
+          _iconAction(
+            Icons.share_outlined,
+            count: post.shareCount,
+            onTap: _openShareSheet,
           ),
-          Expanded(
-            child: _actionButton(
-              Icons.share_outlined,
-              'Share · ${post.shareCount}',
-              onTap: _openShareSheet,
-            ),
-          ),
-          _actionButton(
+          const Spacer(),
+          _iconAction(
             post.saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-            '',
             color: post.saved ? ArdentColors.accent : ArdentColors.fg2,
             onTap: _toggleSave,
           ),
@@ -755,31 +829,201 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
-  Widget _actionButton(IconData icon, String label,
-      {Color color = ArdentColors.fg2, required VoidCallback onTap}) {
+  /// A compact icon-only action (Facebook-style), with an optional count.
+  Widget _iconAction(IconData icon,
+      {int count = 0,
+      Color color = ArdentColors.fg2,
+      required VoidCallback onTap}) {
     return InkWell(
-      borderRadius: BorderRadius.circular(ArdentRadii.sm),
       onTap: onTap,
+      borderRadius: BorderRadius.circular(ArdentRadii.sm),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 15, color: color),
-            if (label.isNotEmpty) ...[
+            Icon(icon, size: 20, color: color),
+            if (count > 0) ...[
               const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
-                ),
-              ),
+              Text('$count',
+                  style: TextStyle(
+                      fontSize: 12.5, fontWeight: FontWeight.w600, color: color)),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  final GlobalKey _likeKey = GlobalKey();
+
+  /// The Like action: tap toggles 👍, long-press (or hold) opens the reaction
+  /// picker. Shows the user's own reaction as a coloured icon plus the total
+  /// count (tap the count to see who reacted).
+  Widget _likeButton() {
+    final mine = post.myReaction;
+    final visual = mine == null ? null : reactionVisual(mine);
+    final color = visual?.color ?? ArdentColors.fg2;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          key: _likeKey,
+          borderRadius: BorderRadius.circular(ArdentRadii.sm),
+          onTap: _toggleLike,
+          onLongPress: () => _showReactionPicker(_likeKey),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+            child: Icon(
+              visual?.icon ?? Icons.thumb_up_alt_outlined,
+              size: 20,
+              color: color,
+            ),
+          ),
+        ),
+        if (post.likeCount > 0)
+          InkWell(
+            borderRadius: BorderRadius.circular(ArdentRadii.sm),
+            onTap: _openWhoReacted,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Text('${post.likeCount}',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: color)),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// A small coloured circle carrying a reaction icon (used on reactor
+  /// avatars in the "who reacted" sheet).
+  Widget _reactionBadge(String key, {double size = 18}) {
+    final v = reactionVisual(key);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: v.color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 1.5),
+      ),
+      child: Icon(v.icon, size: size * 0.55, color: Colors.white),
+    );
+  }
+
+  /// Bottom sheet listing everyone who reacted, filterable by reaction type —
+  /// like tapping the reaction count on a Facebook post.
+  void _openWhoReacted() {
+    final counts = post.reactionCounts;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: ArdentColors.bgSurface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(ArdentRadii.xl)),
+      ),
+      builder: (ctx) {
+        final tabs = <String>['all', ...counts.keys];
+        return DefaultTabController(
+          length: tabs.length,
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.6,
+            minChildSize: 0.4,
+            maxChildSize: 0.9,
+            builder: (context, controller) => Column(
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: ArdentColors.border,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                TabBar(
+                  isScrollable: true,
+                  labelColor: ArdentColors.accent,
+                  unselectedLabelColor: ArdentColors.fg2,
+                  indicatorColor: ArdentColors.accent,
+                  tabs: [
+                    Tab(text: 'All ${post.likeCount}'),
+                    for (final k in counts.keys)
+                      Tab(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(reactionVisual(k).icon,
+                                size: 16, color: reactionVisual(k).color),
+                            const SizedBox(width: 4),
+                            Text('${counts[k]}'),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _reactorList(controller, null),
+                      for (final k in counts.keys) _reactorList(controller, k),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _reactorList(ScrollController controller, String? type) {
+    final people = type == null
+        ? post.reactors
+        : post.reactors.where((r) => r.type == type).toList();
+    if (people.isEmpty) {
+      return ListView(
+        controller: controller,
+        children: [
+          const SizedBox(height: 40),
+          Center(
+            child: Text(
+              type == null
+                  ? '${post.likeCount} ${post.likeCount == 1 ? 'reaction' : 'reactions'}'
+                  : 'No detail available',
+              style: const TextStyle(color: ArdentColors.fg3),
+            ),
+          ),
+        ],
+      );
+    }
+    return ListView.builder(
+      controller: controller,
+      itemCount: people.length,
+      itemBuilder: (context, i) {
+        final r = people[i];
+        return ListTile(
+          leading: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              DsAvatar(initials: r.person.initials, color: r.person.color, size: 40),
+              Positioned(
+                right: -2,
+                bottom: -2,
+                child: _reactionBadge(r.type, size: 18),
+              ),
+            ],
+          ),
+          title: Text(r.person.name,
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: r.person.role.isNotEmpty ? Text(r.person.role) : null,
+        );
+      },
     );
   }
 
@@ -917,6 +1161,102 @@ class _PostCardState extends State<PostCard> {
         ),
         field,
       ],
+    );
+  }
+}
+
+/// Icon + colour for a reaction key, shared by the picker, the summary cluster,
+/// and the "who reacted" sheet.
+({IconData icon, Color color}) reactionVisual(String key) {
+  switch (key) {
+    case 'celebrate':
+      return (icon: Icons.waving_hand_rounded, color: const Color(0xFFE6A000));
+    case 'support':
+      return (icon: Icons.favorite_rounded, color: ArdentColors.crimson500);
+    case 'insightful':
+      return (icon: Icons.lightbulb_rounded, color: ArdentColors.navy600);
+    case 'like':
+    default:
+      return (icon: Icons.thumb_up_alt_rounded, color: ArdentColors.accent);
+  }
+}
+
+/// The floating reaction picker — a rounded bar of the four reactions that pops
+/// up above the Like button (Facebook-style long-press menu).
+class _ReactionBar extends StatelessWidget {
+  const _ReactionBar({required this.selected, required this.onPick});
+
+  final String? selected;
+  final void Function(String key) onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: ArdentColors.bgSurface,
+        borderRadius: BorderRadius.circular(ArdentRadii.pill),
+        boxShadow: const [
+          BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 4)),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final r in reactions)
+            _ReactionButton(
+              visual: reactionVisual(r.key),
+              label: r.label,
+              active: selected == r.key,
+              onTap: () => onPick(r.key),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReactionButton extends StatefulWidget {
+  const _ReactionButton(
+      {required this.visual,
+      required this.label,
+      required this.active,
+      required this.onTap});
+  final ({IconData icon, Color color}) visual;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  State<_ReactionButton> createState() => _ReactionButtonState();
+}
+
+class _ReactionButtonState extends State<_ReactionButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Tooltip(
+        message: widget.label,
+        child: AnimatedScale(
+          scale: _hover ? 1.2 : (widget.active ? 1.1 : 1.0),
+          duration: const Duration(milliseconds: 120),
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _hover = true),
+            onExit: (_) => setState(() => _hover = false),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: widget.active
+                  ? const BoxDecoration(
+                      color: ArdentColors.accentSoft, shape: BoxShape.circle)
+                  : null,
+              child: Icon(widget.visual.icon, size: 26, color: widget.visual.color),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
