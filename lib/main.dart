@@ -152,6 +152,12 @@ class _AppShellState extends State<AppShell> {
   /// revealed again on the first scroll up (Facebook behaviour).
   bool _navVisible = true;
 
+  @override
+  void initState() {
+    super.initState();
+    AppSession.instance.refreshUnreadNotifications();
+  }
+
   void _goTab(int i) => setState(() {
         _index = i;
         _navVisible = true; // always reveal when switching tabs
@@ -201,12 +207,22 @@ class _AppShellState extends State<AppShell> {
                     MaterialPageRoute(builder: (_) => const SearchScreen()),
                   ),
                 ),
-              IconButton(
-                icon: const Icon(Icons.notifications_none_rounded),
-                color: ArdentColors.fg2,
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-                ),
+              ListenableBuilder(
+                listenable: AppSession.instance,
+                builder: (context, _) {
+                  final unread = AppSession.instance.unreadNotifications;
+                  return IconButton(
+                    icon: _NotificationBadgeIcon(unread: unread),
+                    color: ArdentColors.fg2,
+                    tooltip: unread > 0
+                        ? '$unread unread notification${unread == 1 ? '' : 's'}'
+                        : 'Notifications',
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const NotificationsScreen()),
+                    ).then((_) => AppSession.instance.refreshUnreadNotifications()),
+                  );
+                },
               ),
               const SizedBox(width: 4),
             ],
@@ -305,6 +321,66 @@ class _ArdentBottomNav extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _NotificationBadgeIcon extends StatelessWidget {
+  const _NotificationBadgeIcon({required this.unread});
+
+  final int unread;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(
+          unread > 0
+              ? Icons.notifications_rounded
+              : Icons.notifications_none_rounded,
+          size: 24,
+        ),
+        if (unread > 0)
+          Positioned(
+            right: -5,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              constraints: const BoxConstraints(
+                minWidth: 17,
+                minHeight: 17,
+              ),
+              decoration: BoxDecoration(
+                color: ArdentColors.accent,
+                borderRadius: BorderRadius.circular(ArdentRadii.pill),
+                border: Border.all(
+                  color: ArdentColors.bgSurface,
+                  width: 1.5,
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33E53935),
+                    blurRadius: 4,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  unread > 99 ? '99+' : '$unread',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    height: 1.1,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

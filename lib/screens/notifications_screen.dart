@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/api.dart';
+import '../api/session.dart';
 import '../data/mappers.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
@@ -25,12 +26,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         data['notifications'] ??
         data['results'] ??
         data['data']);
-    return items.map(notificationFromJson).toList();
+    final parsed = items.map(notificationFromJson).toList();
+    final rawCount = data['unreadCount'] ?? data['unread_count'] ?? data['count'];
+    final unreadCount = rawCount is num
+        ? rawCount.toInt()
+        : parsed.where((n) => n.unread).length;
+    AppSession.instance.setUnreadNotifications(unreadCount);
+    return parsed;
   }
 
   Future<void> _markAll() async {
     try {
       await Api.instance.notifications.markAllRead();
+      AppSession.instance.setUnreadNotifications(0);
       if (!mounted) return;
       setState(() => _reloadTick++);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -46,6 +54,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (!n.unread) return;
     try {
       await Api.instance.notifications.markRead(n.id);
+      AppSession.instance.decrementUnreadNotifications(1);
       if (mounted) setState(() => _reloadTick++);
     } on ApiException {
       // Non-critical; ignore.
