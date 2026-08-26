@@ -26,9 +26,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscure = true;
   bool _submitting = false;
-  // Show the welcome/onboarding hero only to brand-new installs. Anyone who has
-  // signed in before (even if since signed out) lands straight on the form.
-  late bool _showSignInForm = AuthStore.instance.hasSignedInBefore;
+  late bool _showSignInForm = AuthStore.instance.hasSeenWelcome;
   String? _error;
 
   @override
@@ -336,7 +334,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   child: ElevatedButton(
-                    onPressed: () => setState(() => _showSignInForm = true),
+                    onPressed: () {
+                      AuthStore.instance.markWelcomeSeen();
+                      setState(() => _showSignInForm = true);
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.transparent,
                       shadowColor: Colors.transparent,
@@ -564,28 +565,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
               ),
             ),
-            const SizedBox(height: 12),
-
-            // Back to Welcome Text Link
-            Center(
-              child: TextButton(
-                onPressed: _submitting
-                    ? null
-                    : () => setState(() {
-                          _showSignInForm = false;
-                          _error = null;
-                        }),
-                child: const Text(
-                  'Back to Welcome',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF4A4C52),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
             // Footer note
             Text(

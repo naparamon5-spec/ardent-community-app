@@ -22,12 +22,7 @@ class AuthStore extends ChangeNotifier {
   static final AuthStore instance = AuthStore._();
 
   static const String _tokenKey = 'ardent.auth.token';
-
-  /// Sticky flag: set the first time the user successfully signs in and never
-  /// cleared on sign-out. Lets the login screen show the welcome/onboarding
-  /// hero only to brand-new installs that have never signed in, and take
-  /// returning (signed-out) users straight to the sign-in form.
-  static const String _onboardedKey = 'ardent.onboarded';
+  static const String _seenWelcomeKey = 'ardent.seen_welcome';
 
   static const FlutterSecureStorage _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -47,11 +42,11 @@ class AuthStore extends ChangeNotifier {
   /// Whether [load] has completed at least once.
   bool get isLoaded => _loaded;
 
-  bool _hasSignedInBefore = false;
+  bool _hasSeenWelcome = false;
 
-  /// Whether the user has ever signed in on this install. Stays `true` after a
-  /// sign-out, so the onboarding hero is only shown to fresh installs.
-  bool get hasSignedInBefore => _hasSignedInBefore;
+  /// Whether the welcome screen has been seen (and dismissed via "Sign In").
+  /// Persisted across launches and preserved upon logout.
+  bool get hasSeenWelcome => _hasSeenWelcome;
 
   /// Reads any persisted token into memory. Call once during app startup
   /// (idempotent). Safe to await before deciding which screen to show.
@@ -59,13 +54,25 @@ class AuthStore extends ChangeNotifier {
     if (_loaded) return;
     try {
       _token = await _storage.read(key: _tokenKey);
-      _hasSignedInBefore = (await _storage.read(key: _onboardedKey)) == '1';
+      _hasSeenWelcome = (await _storage.read(key: _seenWelcomeKey)) == '1';
     } catch (_) {
       // Keystore/Keychain read can fail (e.g. after a device restore); treat as
       // signed-out rather than crashing at launch.
       _token = null;
     }
     _loaded = true;
+    notifyListeners();
+  }
+
+  /// Marks the welcome screen as seen so returning or logged-out users always
+  /// go directly to the login credentials form.
+  Future<void> markWelcomeSeen() async {
+    _hasSeenWelcome = true;
+    try {
+      await _storage.write(key: _seenWelcomeKey, value: '1');
+    } catch (e) {
+      debugPrint('[AuthStore] failed to save seen welcome flag: $e');
+    }
     notifyListeners();
   }
 
@@ -77,10 +84,10 @@ class AuthStore extends ChangeNotifier {
   /// block a successful sign-in — the session still works for this run.
   Future<void> setToken(String token) async {
     _token = token;
-    _hasSignedInBefore = true;
+    _hasSeenWelcome = true;
     try {
       await _storage.write(key: _tokenKey, value: token);
-      await _storage.write(key: _onboardedKey, value: '1');
+      await _storage.write(key: _seenWelcomeKey, value: '1');
     } catch (e) {
       debugPrint('[AuthStore] secure-storage write failed; token kept in memory '
           'only (persist will work after a full rebuild): $e');
