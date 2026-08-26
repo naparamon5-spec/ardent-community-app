@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../api/api.dart';
@@ -37,6 +39,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
   /// Story keys the viewer has seen, returned to the feed to grey their rings.
   final Set<String> _viewed = {};
 
+  final GlobalKey<_FloatingReactionsOverlayState> _floatingReactionsKey =
+      GlobalKey<_FloatingReactionsOverlayState>();
+
   @override
   void initState() {
     super.initState();
@@ -56,12 +61,33 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
       (story.authorId.isNotEmpty &&
           story.authorId == AppSession.instance.me.id);
 
-  /// Records a view for the current item (someone else's story only).
+  /// Records a view for the current item and triggers floating reaction if already reacted.
   void _onMediaShown() {
+    _triggerAutoFloatingReaction();
     if (_isMine) return;
     final m = _currentMedia;
     if (m == null || story.id.isEmpty || m.id.isEmpty) return;
     Api.instance.stories.recordMediaView(story.id, m.id);
+  }
+
+  /// When viewing a story/media that already has a selected reaction, automatically
+  /// float that reaction upward.
+  void _triggerAutoFloatingReaction() {
+    final emoji = _currentMedia?.myReaction;
+    if (emoji == null || emoji.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final size = MediaQuery.of(context).size;
+      final idx = _quickReactions.indexOf(emoji);
+      final double x;
+      if (idx >= 0) {
+        x = (size.width / (_quickReactions.length + 1)) * (idx + 1);
+      } else {
+        x = size.width / 2;
+      }
+      final y = size.height - 80;
+      _floatingReactionsKey.currentState?.spawn(emoji, Offset(x, y));
+    });
   }
 
   String _storyKey(Story s) =>
@@ -247,6 +273,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
               ),
             ),
           ),
+          // Floating reactions overlay (Facebook My Day style).
+          Positioned.fill(
+            child: IgnorePointer(
+              child: _FloatingReactionsOverlay(key: _floatingReactionsKey),
+            ),
+          ),
           // Caption + "Seen by" / reactions footer.
           Positioned(
             left: 0,
@@ -428,11 +460,16 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
         if (mine != null && mine.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 8, left: 4),
-            child: Text('You reacted $mine',
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            child: Row(
+              children: [
+                const Text('You reacted ',
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Text(mine, style: const TextStyle(fontSize: 14)),
+              ],
+            ),
           ),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             for (final emoji in _quickReactions) _reactionChoice(emoji),
           ],
@@ -444,19 +481,47 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
   Widget _reactionChoice(String emoji) {
     final active = _currentMedia?.myReaction == emoji;
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () => _sendReaction(emoji),
       child: AnimatedScale(
-        scale: active ? 1.25 : 1.0,
+        scale: active ? 1.15 : 1.0,
         duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutBack,
         child: Container(
-          padding: const EdgeInsets.all(6),
-          decoration: active
-              ? BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.22),
-                  shape: BoxShape.circle,
-                )
-              : null,
-          child: Text(emoji, style: const TextStyle(fontSize: 30)),
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active
+                ? Colors.white.withValues(alpha: 0.28)
+                : Colors.black.withValues(alpha: 0.28),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: active
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.18),
+              width: active ? 1.5 : 1.0,
+            ),
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: Colors.white.withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    )
+                  ]
+                : const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    )
+                  ],
+          ),
+          child: Text(
+            emoji,
+            style: const TextStyle(fontSize: 20),
+          ),
         ),
       ),
     );
@@ -464,10 +529,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
 
   void _sendReaction(String emoji) {
     final m = _currentMedia;
-    if (m == null || story.id.isEmpty || m.id.isEmpty) return;
+    if (m == null) return;
     final previous = m.myReaction;
     // Toggle locally: same emoji clears it.
-    setState(() => m.myReaction = previous == emoji ? null : emoji);
+    final next = previous == emoji ? null : emoji;
+    setState(() => m.myReaction = next);
+    if (story.id.isEmpty || m.id.isEmpty) return;
     Api.instance.stories.reactToMedia(story.id, m.id, emoji).catchError((_) {
       if (mounted) setState(() => m.myReaction = previous);
       return <String, dynamic>{};
@@ -517,6 +584,241 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
         style: const TextStyle(
             color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700, height: 1.4),
       ),
+    );
+  }
+}
+
+/// Facebook My Day style floating reactions overlay.
+/// When user taps a reaction emoji, a burst of floating particles emerges from
+/// the tap position and gracefully floats up the screen with sinusoidal sway,
+/// scaling, and fading.
+class _FloatingReactionsOverlay extends StatefulWidget {
+  const _FloatingReactionsOverlay({super.key});
+
+  @override
+  State<_FloatingReactionsOverlay> createState() =>
+      _FloatingReactionsOverlayState();
+}
+
+class _FloatingReactionsOverlayState extends State<_FloatingReactionsOverlay> {
+  final List<_ParticleModel> _particles = [];
+  final math.Random _rng = math.Random();
+  int _nextId = 0;
+
+  void spawn(String emoji, Offset origin) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final newParticles = <_ParticleModel>[];
+
+    // Primary lead particle
+    newParticles.add(
+      _ParticleModel(
+        id: _nextId++,
+        emoji: emoji,
+        startOffset: origin,
+        driftX: (_rng.nextDouble() - 0.5) * 20,
+        swayAmplitude: 14 + _rng.nextDouble() * 8,
+        swayFrequency: 1.8 + _rng.nextDouble() * 0.8,
+        swayPhase: _rng.nextDouble() * 2 * math.pi,
+        targetYOffset: 480 + _rng.nextDouble() * 120,
+        scale: 1.25 + _rng.nextDouble() * 0.2,
+        maxRotation: (_rng.nextDouble() - 0.5) * 0.3,
+        duration: Duration(milliseconds: 2100 + _rng.nextInt(400)),
+        delayMs: 0,
+        startTime: now,
+      ),
+    );
+
+    // 6 companion burst particles with staggered delays and varied trajectories
+    const delays = [40, 90, 140, 180, 230, 270];
+    for (var i = 0; i < delays.length; i++) {
+      final offsetX = (_rng.nextDouble() - 0.5) * 44;
+      final offsetY = (_rng.nextDouble() - 0.5) * 20;
+      newParticles.add(
+        _ParticleModel(
+          id: _nextId++,
+          emoji: emoji,
+          startOffset: origin + Offset(offsetX, offsetY),
+          driftX: (_rng.nextDouble() - 0.5) * 80,
+          swayAmplitude: 12 + _rng.nextDouble() * 18,
+          swayFrequency: 1.5 + _rng.nextDouble() * 1.5,
+          swayPhase: _rng.nextDouble() * 2 * math.pi,
+          targetYOffset: 380 + _rng.nextDouble() * 240,
+          scale: 0.75 + _rng.nextDouble() * 0.45,
+          maxRotation: (_rng.nextDouble() - 0.5) * 0.5,
+          duration: Duration(milliseconds: 1900 + _rng.nextInt(600)),
+          delayMs: delays[i],
+          startTime: now,
+        ),
+      );
+    }
+
+    setState(() {
+      _particles.addAll(newParticles);
+    });
+  }
+
+  void _removeParticle(int id) {
+    if (!mounted) return;
+    setState(() {
+      _particles.removeWhere((p) => p.id == id);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_particles.isEmpty) return const SizedBox.shrink();
+    return Stack(
+      children: [
+        for (final p in _particles)
+          _AnimatedFloatingParticle(
+            key: ValueKey(p.id),
+            particle: p,
+            onComplete: () => _removeParticle(p.id),
+          ),
+      ],
+    );
+  }
+}
+
+class _ParticleModel {
+  final int id;
+  final String emoji;
+  final Offset startOffset;
+  final double driftX;
+  final double swayAmplitude;
+  final double swayFrequency;
+  final double swayPhase;
+  final double targetYOffset;
+  final double scale;
+  final double maxRotation;
+  final Duration duration;
+  final int delayMs;
+  final DateTime startTime;
+
+  _ParticleModel({
+    required this.id,
+    required this.emoji,
+    required this.startOffset,
+    required this.driftX,
+    required this.swayAmplitude,
+    required this.swayFrequency,
+    required this.swayPhase,
+    required this.targetYOffset,
+    required this.scale,
+    required this.maxRotation,
+    required this.duration,
+    required this.delayMs,
+    required this.startTime,
+  });
+}
+
+class _AnimatedFloatingParticle extends StatefulWidget {
+  const _AnimatedFloatingParticle({
+    super.key,
+    required this.particle,
+    required this.onComplete,
+  });
+
+  final _ParticleModel particle;
+  final VoidCallback onComplete;
+
+  @override
+  State<_AnimatedFloatingParticle> createState() =>
+      _AnimatedFloatingParticleState();
+}
+
+class _AnimatedFloatingParticleState extends State<_AnimatedFloatingParticle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.particle.duration,
+    );
+
+    if (widget.particle.delayMs > 0) {
+      Future.delayed(Duration(milliseconds: widget.particle.delayMs), () {
+        if (mounted) {
+          setState(() => _started = true);
+          _controller.forward().then((_) {
+            if (mounted) widget.onComplete();
+          });
+        }
+      });
+    } else {
+      _started = true;
+      _controller.forward().then((_) {
+        if (mounted) widget.onComplete();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_started) return const SizedBox.shrink();
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = _controller.value;
+        final curved = Curves.easeOutCubic.transform(t);
+
+        // Vertical upward float
+        final y = widget.particle.startOffset.dy -
+            (widget.particle.targetYOffset * curved);
+
+        // Horizontal sinusoidal sway + overall drift
+        final sway = math.sin(
+                t * widget.particle.swayFrequency * 2 * math.pi +
+                    widget.particle.swayPhase) *
+            widget.particle.swayAmplitude;
+        final x =
+            widget.particle.startOffset.dx + (widget.particle.driftX * curved) + sway;
+
+        // Pop in scale at start (0 -> target scale over first 14% of travel)
+        final scale = t < 0.14
+            ? (t / 0.14) * widget.particle.scale
+            : widget.particle.scale;
+
+        // Fade out smoothly starting at 60% of travel
+        final opacity = t > 0.6
+            ? (1.0 - ((t - 0.6) / 0.4)).clamp(0.0, 1.0)
+            : 1.0;
+
+        // Rotational oscillation
+        final rotation =
+            math.sin(t * widget.particle.swayFrequency * 2 * math.pi) *
+                widget.particle.maxRotation;
+
+        return Positioned(
+          left: x - 18,
+          top: y - 18,
+          child: Opacity(
+            opacity: opacity,
+            child: Transform.rotate(
+              angle: rotation,
+              child: Transform.scale(
+                scale: scale,
+                child: Text(
+                  widget.particle.emoji,
+                  style: const TextStyle(fontSize: 26),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
