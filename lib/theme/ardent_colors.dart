@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 class ArdentColors {
   ArdentColors._();
 
-  // ---- 1. Ardent Hub brand palette ----
+  // ---- 1. Ardent brand palette ----
   static const Color brandWhite = Color(0xFFFFFFFF);
   static const Color brandDarkRed = Color(0xFF760F12); // #760F12 Primary Dark
   static const Color brandCrimson = Color(0xFFA31B1F); // #A31B1F Brand Crimson

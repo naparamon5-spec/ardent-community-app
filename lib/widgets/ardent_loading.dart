@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import '../theme/ardent_colors.dart';
 
-/// A branded loading widget featuring the Ardent Hub red circular spinner
-/// or an animated pulsing Ardent Hub emblem.
+/// A branded loading widget featuring the Ardent red circular spinner
+/// or an animated pulsing Ardent emblem.
 class ArdentLoading extends StatefulWidget {
   const ArdentLoading({
     super.key,
@@ -117,7 +117,7 @@ class _ArdentLoadingState extends State<ArdentLoading>
 
 /// Full screen loading screen used during cold boot / session bootstrap.
 class ArdentSplashScreen extends StatelessWidget {
-  const ArdentSplashScreen({super.key, this.message = 'Loading Ardent Hub...'});
+  const ArdentSplashScreen({super.key, this.message = 'Loading Ardent...'});
 
   final String message;
 
@@ -130,11 +130,11 @@ class ArdentSplashScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Image.asset(
-              'assets/images/ardent_hub_logo.png',
+              'assets/images/ardent_logo.png',
               width: 220,
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) => const Text(
-                'Ardent Hub',
+                'Ardent',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w800,

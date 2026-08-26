@@ -104,7 +104,7 @@ class _SearchScreenState extends State<SearchScreen> {
           onChanged: _onChanged,
           onSubmitted: _run,
           decoration: InputDecoration(
-            hintText: 'Search Ardent Hub',
+            hintText: 'Search Ardent',
             isDense: true,
             filled: true,
             fillColor: ArdentColors.bgSubtle,

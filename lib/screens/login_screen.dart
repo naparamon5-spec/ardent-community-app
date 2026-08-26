@@ -4,9 +4,9 @@ import '../api/api.dart';
 import '../api/session.dart';
 import '../theme/ardent_colors.dart';
 
-/// Ardent Hub Login & Welcome Screen.
+/// Ardent Login & Welcome Screen.
 /// Pixel-matched with the brand design reference:
-/// - 3D Ardent Hub Emblem & "ArdentHub." branding
+/// - 3D Ardent Emblem & "Ardent." branding
 /// - "Your Community, In One Place" tagline
 /// - "Connect • Share • Grow" sub-tagline
 /// - Transparent 3D wave ribbon background
@@ -26,7 +26,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscure = true;
   bool _submitting = false;
-  bool _showSignInForm = false;
+  // Show the welcome/onboarding hero only to brand-new installs. Anyone who has
+  // signed in before (even if since signed out) lands straight on the form.
+  late bool _showSignInForm = AuthStore.instance.hasSignedInBefore;
   String? _error;
 
   @override
@@ -82,9 +84,25 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFFCF4F3),
       body: Stack(
         children: [
+          // 0. Warm blush background wash (blush at top → white toward centre)
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.center,
+                  colors: [
+                    Color(0xFFFBECEC),
+                    Color(0xFFFFFFFF),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
           // 1. Soft top-left ambient pink/red glow
           Positioned(
             top: 50,
@@ -131,7 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
           Positioned(
             left: 0,
             right: 0,
-            bottom: _showSignInForm ? 0 : 85,
+            bottom: _showSignInForm ? 0 : 110,
             height: 240,
             child: IgnorePointer(
               child: Opacity(
@@ -193,19 +211,19 @@ class _LoginScreenState extends State<LoginScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: 20),
-
-          // Brand Hero
-          Column(
+          // Brand Hero — vertically centred in the space above the buttons
+          Expanded(
+            child: Center(
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 3D Ardent Hub Emblem
+              // 3D Ardent Emblem
               Hero(
-                tag: 'ardent_hub_emblem',
+                tag: 'ardent_emblem',
                 child: Image.asset(
                   'assets/images/ardent_hub_symbol.png',
-                  width: 140,
-                  height: 120,
+                  width: 150,
+                  height: 128,
                   fit: BoxFit.contain,
                   errorBuilder: (_, _, _) => Container(
                     width: 100,
@@ -218,35 +236,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // ArdentHub. Typography
-              RichText(
-                textAlign: TextAlign.center,
-                text: const TextSpan(
-                  style: TextStyle(
-                    fontFamily: 'Montserrat',
-                    fontSize: 36,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.8,
-                    height: 1.1,
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'Ardent',
-                      style: TextStyle(color: Color(0xFF1B1B1B)),
-                    ),
-                    TextSpan(
-                      text: 'Hub',
-                      style: TextStyle(color: ArdentColors.brandCrimson),
-                    ),
-                    TextSpan(
-                      text: '.',
-                      style: TextStyle(color: ArdentColors.brandCrimson),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
 
               // Tagline: "Your Community, In One Place"
               const Text(
@@ -314,6 +303,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
               ),
             ],
+              ),
+            ),
           ),
 
           // Bottom Action Buttons
@@ -323,7 +314,7 @@ class _LoginScreenState extends State<LoginScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // "Get Started" Solid Crimson Pill Button
+                // "Sign In" Solid Crimson Pill Button — the single primary CTA
                 Container(
                   height: 52,
                   decoration: BoxDecoration(
@@ -354,39 +345,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     child: const Text(
-                      'Get Started',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-
-                // "Sign In" Outlined Pill Button
-                SizedBox(
-                  height: 52,
-                  child: OutlinedButton(
-                    onPressed: () => setState(() => _showSignInForm = true),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      side: const BorderSide(
-                        color: ArdentColors.brandCrimson,
-                        width: 1.8,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(ArdentRadii.pill),
-                      ),
-                    ),
-                    child: const Text(
                       'Sign In',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: ArdentColors.brandCrimson,
+                        color: Colors.white,
                         letterSpacing: 0.2,
                       ),
                     ),
@@ -420,7 +383,7 @@ class _LoginScreenState extends State<LoginScreen> {
             // Header Emblem & Title
             Center(
               child: Hero(
-                tag: 'ardent_hub_emblem',
+                tag: 'ardent_emblem',
                 child: Image.asset(
                   'assets/images/ardent_hub_symbol.png',
                   width: 85,
@@ -429,34 +392,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
 
-            RichText(
-              textAlign: TextAlign.center,
-              text: const TextSpan(
-                style: TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.6,
-                ),
-                children: [
-                  TextSpan(
-                    text: 'Ardent',
-                    style: TextStyle(color: Color(0xFF1B1B1B)),
-                  ),
-                  TextSpan(
-                    text: 'Hub',
-                    style: TextStyle(color: ArdentColors.brandCrimson),
-                  ),
-                  TextSpan(
-                    text: '.',
-                    style: TextStyle(color: ArdentColors.brandCrimson),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 6),
             Text(
               'Sign in to your account',
               textAlign: TextAlign.center,

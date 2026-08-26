@@ -1,6 +1,6 @@
 {
-    "name": "Ardent Hub",
-    "short_name": "Ardent Hub",
+    "name": "Ardent",
+    "short_name": "Ardent",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#760F12",

@@ -2,7 +2,7 @@
     <!-- Required for the app to reach the Ardent Community backend API. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="Ardent Hub"
+        android:label="Ardent"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"

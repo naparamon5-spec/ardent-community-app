@@ -83,7 +83,7 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Bundle the .env file and Ardent Hub brand images.
+  # Bundle the .env file and Ardent brand images.
   assets:
     - .env
     - assets/images/

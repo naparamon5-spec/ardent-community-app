@@ -40,7 +40,7 @@ class ArdentCommunityApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ardent Hub',
+      title: 'Ardent',
       debugShowCheckedModeBanner: false,
       theme: ArdentTheme.light(),
       // Clamp the OS text-scale so an aggressive accessibility font size can't
@@ -251,43 +251,22 @@ class _AppShellState extends State<AppShell> {
   }
 
   Widget _brandTitle() {
-    return Row(
-      children: [
-        Image.asset(
-          'assets/images/ardent_hub_symbol.png',
-          width: 28,
-          height: 28,
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) => Container(
-            width: 26,
-            height: 26,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: ArdentColors.brandCrimson,
-            ),
+    // Only the logo symbol — no "Ardent" wordmark.
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Image.asset(
+        'assets/images/ardent_hub_symbol.png',
+        height: 28,
+        fit: BoxFit.contain,
+        errorBuilder: (_, _, _) => Container(
+          width: 26,
+          height: 26,
+          decoration: const BoxDecoration(
+            color: ArdentColors.brandCrimson,
+            shape: BoxShape.circle,
           ),
         ),
-        const SizedBox(width: ArdentSpacing.s2),
-        RichText(
-          text: const TextSpan(
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.3,
-            ),
-            children: [
-              TextSpan(
-                text: 'Ardent',
-                style: TextStyle(color: ArdentColors.brandCharcoal),
-              ),
-              TextSpan(
-                text: 'Hub',
-                style: TextStyle(color: ArdentColors.brandCrimson),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
