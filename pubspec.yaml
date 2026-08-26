@@ -61,6 +61,16 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/images/ardent_hub_icon_square_1024.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "assets/images/ardent_launcher_background.png"
+  adaptive_icon_foreground: "assets/images/ardent_launcher_foreground.png"
+  remove_alpha_ios: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -73,9 +83,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Bundle the .env file so flutter_dotenv can read API_BASE_URL at runtime.
+  # Bundle the .env file and Ardent Hub brand images.
   assets:
     - .env
+    - assets/images/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

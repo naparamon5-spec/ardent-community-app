@@ -62,8 +62,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _section('Support'),
           _tile(Icons.help_outline_rounded, 'Help center',
               onTap: () => _toast('Help center (demo)')),
-          _tile(Icons.info_outline_rounded, 'About Ardent Community',
-              subtitle: 'Version 1.0.0', onTap: () => _toast('Ardent Community v1.0.0')),
+          _tile(Icons.info_outline_rounded, 'About Ardent Hub',
+              subtitle: 'Version 1.0.0', onTap: () => _toast('Ardent Hub v1.0.0')),
           const SizedBox(height: ArdentSpacing.s6),
           OutlinedButton.icon(
             onPressed: () => _confirmLogout(),

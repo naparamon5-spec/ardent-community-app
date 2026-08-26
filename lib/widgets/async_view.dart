@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'ardent_loading.dart';
 import '../api/api_exception.dart';
 import '../theme/ardent_colors.dart';
 
@@ -48,7 +49,7 @@ class _AsyncViewState<T> extends State<AsyncView<T>> {
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: ArdentLoading(showLogo: true, size: 40));
         }
         if (snapshot.hasError) {
           return _ErrorState(error: snapshot.error!, onRetry: _reload);

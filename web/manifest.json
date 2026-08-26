@@ -1,11 +1,11 @@
 {
-    "name": "ardent_community",
-    "short_name": "ardent_community",
+    "name": "Ardent Hub",
+    "short_name": "Ardent Hub",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#760F12",
+    "theme_color": "#760F12",
+    "description": "Your Community, In One Place",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

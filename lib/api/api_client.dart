@@ -1,13 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show HttpClient;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'api_config.dart';
 import 'api_exception.dart';
 import 'auth_store.dart';
+
+http.Client _createDefaultHttpClient() {
+  if (kIsWeb) return http.Client();
+  final ioHttpClient = HttpClient()
+    ..badCertificateCallback = (cert, host, port) => true;
+  return IOClient(ioHttpClient);
+}
 
 /// A single field + file pair for a `multipart/form-data` upload.
 ///
@@ -49,7 +58,7 @@ class UploadFile {
 /// classes in `services/` are thin wrappers over it.
 class ApiClient {
   ApiClient({http.Client? httpClient, AuthStore? authStore})
-      : _http = httpClient ?? http.Client(),
+      : _http = httpClient ?? _createDefaultHttpClient(),
         _auth = authStore ?? AuthStore.instance;
 
   static final ApiClient instance = ApiClient();

@@ -13,6 +13,7 @@ import 'screens/profile_screen.dart';
 import 'screens/search_screen.dart';
 import 'theme/ardent_colors.dart';
 import 'theme/ardent_theme.dart';
+import 'widgets/ardent_loading.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,7 +40,7 @@ class ArdentCommunityApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ardent Community',
+      title: 'Ardent Hub',
       debugShowCheckedModeBanner: false,
       theme: ArdentTheme.light(),
       // Clamp the OS text-scale so an aggressive accessibility font size can't
@@ -86,15 +87,18 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   /// When a token is present but the profile hasn't loaded yet (e.g. session
-  /// restored at launch), fetch `/auth/me`. A failure (invalid/expired token)
-  /// clears the token via ApiClient's 401 handler, dropping us to login.
+  /// restored at launch), fetch `/auth/me`. If it fails (expired token or unreachable server),
+  /// immediately clear the stale token so the user is taken directly to the login screen.
   Future<void> _ensureProfileLoaded() async {
     if (AuthStore.instance.isAuthenticated && !AppSession.instance.isReady) {
       try {
-        await AppSession.instance.loadMe();
+        await AppSession.instance
+            .loadMe()
+            .timeout(const Duration(seconds: 3));
         Api.instance.realtime.connect();
-      } catch (_) {
-        // Handled by the 401 flow / surfaced on next interaction.
+      } catch (e) {
+        debugPrint('[AuthGate] Stale/unreachable session ($e) — clearing token to show login');
+        await AuthStore.instance.clear();
       }
       if (mounted) setState(() {});
     }
@@ -107,10 +111,7 @@ class _AuthGateState extends State<AuthGate> {
     }
     // Authenticated but still fetching the profile at cold start.
     if (!AppSession.instance.isReady) {
-      return const Scaffold(
-        backgroundColor: ArdentColors.bgSurface,
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const ArdentSplashScreen();
     }
     return AnimatedBuilder(
       animation: AppSession.instance,
@@ -252,25 +253,38 @@ class _AppShellState extends State<AppShell> {
   Widget _brandTitle() {
     return Row(
       children: [
-        Container(
-          width: 26,
-          height: 26,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              center: Alignment(-0.3, -0.4),
-              radius: 1.0,
-              colors: [ArdentColors.brandCoral, ArdentColors.brandRed, ArdentColors.red800],
-              stops: [0.0, 0.48, 1.0],
+        Image.asset(
+          'assets/images/ardent_hub_symbol.png',
+          width: 28,
+          height: 28,
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) => Container(
+            width: 26,
+            height: 26,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: ArdentColors.brandCrimson,
             ),
           ),
         ),
         const SizedBox(width: ArdentSpacing.s2),
-        const Flexible(
-          child: Text(
-            'Ardent Community',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+        RichText(
+          text: const TextSpan(
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.3,
+            ),
+            children: [
+              TextSpan(
+                text: 'Ardent',
+                style: TextStyle(color: ArdentColors.brandCharcoal),
+              ),
+              TextSpan(
+                text: 'Hub',
+                style: TextStyle(color: ArdentColors.brandCrimson),
+              ),
+            ],
           ),
         ),
       ],

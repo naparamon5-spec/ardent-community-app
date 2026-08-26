@@ -6,25 +6,29 @@ import 'package:flutter/material.dart';
 class ArdentColors {
   ArdentColors._();
 
-  // ---- 1. Raw brand palette ----
+  // ---- 1. Ardent Hub brand palette ----
   static const Color brandWhite = Color(0xFFFFFFFF);
-  static const Color brandCrimson = Color(0xFFC6324C);
+  static const Color brandDarkRed = Color(0xFF760F12); // #760F12 Primary Dark
+  static const Color brandCrimson = Color(0xFFA31B1F); // #A31B1F Brand Crimson
+  static const Color brandBrightRed = Color(0xFFD62828); // #D62828 Bright Accent
+  static const Color brandOffWhite = Color(0xFFF5F5F5); // #F5F5F5 Background
+  static const Color brandCharcoal = Color(0xFF222222); // #222222 Dark Text
   static const Color brandCoral = Color(0xFFFF5969);
   static const Color brandNavy = Color(0xFF133341);
-  static const Color brandRed = Color(0xFFE90408);
+  static const Color brandRed = Color(0xFFA31B1F);
   static const Color brandGray = Color(0xFFD7D7D7);
 
-  // ---- 2. Red scale (primary, anchored on #E90408) ----
-  static const Color red50 = Color(0xFFFFF1F1);
-  static const Color red100 = Color(0xFFFFDDDE);
-  static const Color red200 = Color(0xFFFFB3B5);
-  static const Color red300 = Color(0xFFFF8285);
-  static const Color red400 = Color(0xFFFF5969);
-  static const Color red500 = Color(0xFFE90408);
-  static const Color red600 = Color(0xFFCC0306);
-  static const Color red700 = Color(0xFFA30205);
-  static const Color red800 = Color(0xFF7A0203);
-  static const Color red900 = Color(0xFF520102);
+  // ---- 2. Red scale (primary, anchored on #A31B1F / #760F12) ----
+  static const Color red50 = Color(0xFFFDF2F2);
+  static const Color red100 = Color(0xFFFBE4E5);
+  static const Color red200 = Color(0xFFF6CCD0);
+  static const Color red300 = Color(0xFFE88B92);
+  static const Color red400 = Color(0xFFD62828);
+  static const Color red500 = Color(0xFFA31B1F);
+  static const Color red600 = Color(0xFF8E171B);
+  static const Color red700 = Color(0xFF760F12);
+  static const Color red800 = Color(0xFF5A0B0E);
+  static const Color red900 = Color(0xFF3F0608);
 
   // ---- 3. Crimson scale (secondary) ----
   static const Color crimson100 = Color(0xFFF8DDE2);
@@ -67,14 +71,14 @@ class ArdentColors {
   static const Color statusResolvedBg = Color(0xFFE3F5EE);
 
   // ---- 7. Semantic surface / text / border tokens ----
-  static const Color bgApp = gray50;
+  static const Color bgApp = brandOffWhite;
   static const Color bgSurface = Color(0xFFFFFFFF);
   static const Color bgSubtle = gray100;
   static const Color bgInset = gray50;
-  static const Color bgDark = navy800;
-  static const Color bgDarkDeep = navy900;
+  static const Color bgDark = brandDarkRed;
+  static const Color bgDarkDeep = red900;
 
-  static const Color fg1 = navy900;
+  static const Color fg1 = brandCharcoal;
   static const Color fg2 = gray700;
   static const Color fg3 = gray500;
   static const Color fgOnDark = Color(0xFFFFFFFF);
@@ -85,7 +89,7 @@ class ArdentColors {
   static const Color borderStrong = gray300;
   static const Color borderDark = Color(0x1AFFFFFF); // rgba(255,255,255,0.10)
 
-  static const Color accent = red500;
+  static const Color accent = brandCrimson;
   static const Color accentHover = red600;
   static const Color accentPress = red700;
   static const Color accentSoft = red50;
