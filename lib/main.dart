@@ -306,7 +306,7 @@ class _ArdentBottomNav extends StatelessWidget {
         top: false,
         child: Padding(
           padding: const EdgeInsets.symmetric(
-              horizontal: ArdentSpacing.s3, vertical: ArdentSpacing.s2),
+              horizontal: ArdentSpacing.s3, vertical: 4),
           child: Row(
             children: [
               for (int i = 0; i < tabs.length; i++)
@@ -400,14 +400,14 @@ class _NavItem extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(ArdentRadii.pill),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOut,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 3),
               decoration: BoxDecoration(
                 color: active ? ArdentColors.accentSoft : Colors.transparent,
                 borderRadius: BorderRadius.circular(ArdentRadii.pill),
@@ -415,7 +415,7 @@ class _NavItem extends StatelessWidget {
               child: Icon(active ? tab.activeIcon : tab.icon,
                   size: 24, color: color),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Text(
               tab.title,
               maxLines: 1,
@@ -424,6 +424,7 @@ class _NavItem extends StatelessWidget {
                 fontSize: 11,
                 fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                 color: color,
+                height: 1.15,
               ),
             ),
           ],
