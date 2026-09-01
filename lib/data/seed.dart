@@ -235,6 +235,8 @@ class Group {
     this.isDirect = false,
     this.joined = false,
     this.pending = false,
+    this.online = false,
+    this.lastActive = '',
   });
   final String id;
   final String name;
@@ -244,6 +246,12 @@ class Group {
 
   /// True for a 1:1 direct-message thread rather than a named group.
   final bool isDirect;
+
+  /// For a direct thread: whether the other person is currently online, and
+  /// their web-style presence label (e.g. `Active 3h ago`). Empty/false for
+  /// group threads.
+  final bool online;
+  final String lastActive;
 
   /// Whether the current user is an active member.
   final bool joined;

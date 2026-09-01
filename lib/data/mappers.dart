@@ -111,6 +111,35 @@ DateTime? _parseDate(dynamic v) {
   return DateTime.tryParse('$v')?.toLocal();
 }
 
+/// Compact presence age used for "last active" labels — mirrors the web store's
+/// formatter exactly: `Just now`, `5m`, `3h`, `2d`, `4w`, then a locale date.
+/// Returns `''` when the timestamp is missing or unparseable.
+String _presenceAge(dynamic iso) {
+  final dt = _parseDate(iso);
+  if (dt == null) return '';
+  var secs = DateTime.now().difference(dt).inSeconds;
+  if (secs < 0) secs = 0;
+  if (secs < 45) return 'Just now';
+  final mins = secs ~/ 60;
+  if (mins < 60) return '${mins}m';
+  final hours = mins ~/ 60;
+  if (hours < 24) return '${hours}h';
+  final days = hours ~/ 24;
+  if (days < 7) return '${days}d';
+  final weeks = days ~/ 7;
+  if (weeks < 5) return '${weeks}w';
+  return '${dt.month}/${dt.day}/${dt.year}';
+}
+
+/// Web-identical presence label: `Active now` when [online], otherwise
+/// `Active <age> ago` from [lastActiveAt] (e.g. `Active 3h ago`), falling back
+/// to `Offline` when there's no known last-active time.
+String presenceLabel(bool online, dynamic lastActiveAt) {
+  if (online) return 'Active now';
+  final age = _presenceAge(lastActiveAt);
+  return age.isEmpty ? 'Offline' : 'Active $age ago';
+}
+
 /// A short relative label like `2h ago`, `Yesterday`, `Mar 3`.
 String relativeTime(dynamic iso) {
   final dt = _parseDate(iso);
@@ -172,8 +201,8 @@ Person personFromJson(dynamic value) {
     color: parseColor(_pick(json, ['color', 'avatarColor'])) ??
         avatarColorFor(id.isNotEmpty ? id : name),
     online: online,
-    lastActive: _str(_pick(json, ['lastActive', 'lastSeen']),
-        online ? 'Active now' : 'Active recently'),
+    lastActive: presenceLabel(
+        online, _pick(json, ['lastActiveAt', 'lastActive', 'lastSeen'])),
     email: _str(_pick(json, ['email', 'workEmail'])),
     department: _str(_pick(json, ['department', 'dept'])),
     location: _str(_pick(json, ['location'])),
@@ -543,15 +572,29 @@ Group groupFromJson(dynamic value) {
   final pending = _bool(_pick(json, ['pending', 'requested'])) ||
       status == 'pending' ||
       status == 'requested';
+
+  // Direct threads carry the counterpart in `other` — its name/color identify
+  // the thread and its presence drives the "Active now / Active 3h ago" label.
+  final other = isDirect ? _pick(json, ['other', 'peer', 'user']) : null;
+  final otherPerson = other == null ? null : personFromJson(other);
+
+  final name = otherPerson?.name ??
+      _str(_pick(json, ['name', 'title']), isDirect ? 'Direct message' : 'Group');
+  final color = otherPerson?.color ??
+      parseColor(_pick(json, ['color'])) ??
+      avatarColorFor(id);
+
   return Group(
     id: id,
-    name: _str(_pick(json, ['name', 'title']), isDirect ? 'Direct message' : 'Group'),
+    name: name,
     members: _int(_pick(json, ['memberCount', 'membersCount', 'members'])),
-    color: parseColor(_pick(json, ['color'])) ?? avatarColorFor(id),
+    color: color,
     desc: _str(_pick(json, ['description', 'desc'])),
     isDirect: isDirect,
     joined: joined,
     pending: pending,
+    online: otherPerson?.online ?? false,
+    lastActive: otherPerson?.lastActive ?? '',
   );
 }
 

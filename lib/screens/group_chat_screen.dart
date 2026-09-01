@@ -330,7 +330,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   if (!g.isDirect)
                     Text('${g.members} members',
-                        style: const TextStyle(fontSize: 11, color: ArdentColors.fg3)),
+                        style: const TextStyle(fontSize: 11, color: ArdentColors.fg3))
+                  else if (g.online || g.lastActive.isNotEmpty)
+                    Text(g.online ? 'Active now' : g.lastActive,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: g.online
+                                ? const Color(0xFF2FAE5C)
+                                : ArdentColors.fg3)),
                 ],
               ),
             ),

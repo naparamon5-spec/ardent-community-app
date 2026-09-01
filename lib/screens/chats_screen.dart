@@ -71,6 +71,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
         isDirect: true,
         joined: true,
         members: 2,
+        online: p.online,
+        lastActive: p.lastActive,
       );
       navigator.push(
         MaterialPageRoute(builder: (_) => GroupChatScreen(group: thread)),
