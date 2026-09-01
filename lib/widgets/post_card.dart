@@ -445,12 +445,21 @@ class _PostCardState extends State<PostCard> {
             ],
           ),
         ),
-        if (post.pinned)
-          const DsChip(label: 'Pinned', fg: ArdentColors.statusUrgent, bg: ArdentColors.statusUrgentBg),
-        IconButton(
-          icon: const Icon(Icons.more_horiz_rounded, color: ArdentColors.fg3),
-          onPressed: _openPostMenu,
-          visualDensity: VisualDensity.compact,
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            if (post.pinned)
+              const DsChip(
+                  label: 'Pinned',
+                  fg: ArdentColors.statusUrgent,
+                  bg: ArdentColors.statusUrgentBg),
+            IconButton(
+              icon: const Icon(Icons.more_horiz_rounded, color: ArdentColors.fg3),
+              onPressed: _openPostMenu,
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
         ),
       ],
     );
