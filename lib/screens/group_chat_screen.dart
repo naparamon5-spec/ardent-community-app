@@ -1222,7 +1222,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void _openSharedContent() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _SharedContentScreen(group: widget.group),
+        builder: (_) =>
+            _SharedContentScreen(group: widget.group, messages: _messages),
       ),
     );
   }
@@ -1601,13 +1602,53 @@ class _ImageViewer extends StatelessWidget {
   }
 }
 
+/// A single link shared in the conversation, with the author who posted it.
+class _SharedLink {
+  const _SharedLink({required this.url, required this.author});
+  final String url;
+  final Person author;
+}
+
+/// A file shared in the conversation, with the author who posted it.
+class _SharedFile {
+  const _SharedFile({required this.item, required this.author});
+  final MediaItem item;
+  final Person author;
+}
+
 /// Shared content for a conversation, split across Images / Files / Links tabs.
+///
+/// Scans the loaded [messages] and surfaces every image attachment, file/video
+/// attachment, and link (URLs found in message text) — newest first — the way a
+/// web chat's shared-media panel does.
 class _SharedContentScreen extends StatelessWidget {
-  const _SharedContentScreen({required this.group});
+  const _SharedContentScreen({required this.group, required this.messages});
   final Group group;
+  final List<_ChatMessage> messages;
+
+  /// Matches http(s) URLs anywhere inside a message body.
+  static final _urlRegExp = RegExp(r'https?://[^\s]+', caseSensitive: false);
 
   @override
   Widget build(BuildContext context) {
+    final images = <MediaItem>[];
+    final files = <_SharedFile>[];
+    final links = <_SharedLink>[];
+
+    // Walk newest → oldest so each tab lists the most recent content first.
+    for (final m in messages.reversed) {
+      for (final item in m.media) {
+        if (item.isImage) {
+          images.add(item);
+        } else {
+          files.add(_SharedFile(item: item, author: m.author));
+        }
+      }
+      for (final match in _urlRegExp.allMatches(m.text)) {
+        links.add(_SharedLink(url: match.group(0)!, author: m.author));
+      }
+    }
+
     return DefaultTabController(
       length: 3,
       child: Scaffold(
@@ -1621,17 +1662,152 @@ class _SharedContentScreen extends StatelessWidget {
             ],
           ),
         ),
-        body: const TabBarView(
+        body: TabBarView(
           children: [
-            _CenteredMessage(
-                icon: Icons.photo_library_outlined, message: 'No images yet.'),
-            _CenteredMessage(
-                icon: Icons.insert_drive_file_outlined, message: 'No files yet.'),
-            _CenteredMessage(icon: Icons.link_rounded, message: 'No links yet.'),
+            _ImagesTab(images: images),
+            _FilesTab(files: files),
+            _LinksTab(links: links),
           ],
         ),
       ),
     );
+  }
+}
+
+/// Grid of every image attachment in the conversation.
+class _ImagesTab extends StatelessWidget {
+  const _ImagesTab({required this.images});
+  final List<MediaItem> images;
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) {
+      return const _CenteredMessage(
+          icon: Icons.photo_library_outlined, message: 'No images yet.');
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(2),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+      ),
+      itemCount: images.length,
+      itemBuilder: (context, i) {
+        final item = images[i];
+        return GestureDetector(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => _ImageViewer(url: item.url)),
+          ),
+          child: Container(
+            color: ArdentColors.bgSubtle,
+            child: Image.network(
+              item.url,
+              fit: BoxFit.cover,
+              errorBuilder: (context, _, _) => const Icon(
+                  Icons.broken_image_outlined,
+                  color: ArdentColors.fg3,
+                  size: 28),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// List of every file / video attachment in the conversation.
+class _FilesTab extends StatelessWidget {
+  const _FilesTab({required this.files});
+  final List<_SharedFile> files;
+
+  @override
+  Widget build(BuildContext context) {
+    if (files.isEmpty) {
+      return const _CenteredMessage(
+          icon: Icons.insert_drive_file_outlined, message: 'No files yet.');
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: ArdentSpacing.s2),
+      itemCount: files.length,
+      separatorBuilder: (_, _) =>
+          const Divider(height: 1, color: ArdentColors.border),
+      itemBuilder: (context, i) {
+        final f = files[i];
+        final item = f.item;
+        final name = item.fileName?.isNotEmpty == true
+            ? item.fileName!
+            : item.url.split('/').last;
+        return ListTile(
+          leading: Icon(
+            item.isVideo
+                ? Icons.play_circle_outline_rounded
+                : Icons.insert_drive_file_rounded,
+            color: ArdentColors.accent,
+          ),
+          title: Text(name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600, color: ArdentColors.fg1)),
+          subtitle: Text(f.author.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: ArdentColors.fg3)),
+          trailing:
+              const Icon(Icons.download_rounded, color: ArdentColors.fg3),
+          onTap: () => _launch(context, item.url),
+        );
+      },
+    );
+  }
+}
+
+/// List of every link shared in the conversation.
+class _LinksTab extends StatelessWidget {
+  const _LinksTab({required this.links});
+  final List<_SharedLink> links;
+
+  @override
+  Widget build(BuildContext context) {
+    if (links.isEmpty) {
+      return const _CenteredMessage(
+          icon: Icons.link_rounded, message: 'No links yet.');
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: ArdentSpacing.s2),
+      itemCount: links.length,
+      separatorBuilder: (_, _) =>
+          const Divider(height: 1, color: ArdentColors.border),
+      itemBuilder: (context, i) {
+        final link = links[i];
+        return ListTile(
+          leading: const Icon(Icons.link_rounded, color: ArdentColors.accent),
+          title: Text(link.url,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: ArdentColors.accent,
+                  decoration: TextDecoration.underline)),
+          subtitle: Text(link.author.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: ArdentColors.fg3)),
+          onTap: () => _launch(context, link.url),
+        );
+      },
+    );
+  }
+}
+
+/// Opens [url] in an external app, showing a snackbar if it can't be launched.
+Future<void> _launch(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url);
+  final ok = uri != null &&
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!ok && context.mounted) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Could not open link')));
   }
 }
 
