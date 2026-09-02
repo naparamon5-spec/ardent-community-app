@@ -143,9 +143,11 @@ class _Hero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topPad = MediaQuery.of(context).padding.top;
+    // The Explore SliverAppBar already consumes the status-bar inset, so the
+    // hero only needs its own top padding — no MediaQuery top padding here, or
+    // the status-bar height gets double-counted as a large empty gap.
     return Container(
-      padding: EdgeInsets.fromLTRB(ArdentSpacing.s4, topPad + ArdentSpacing.s5,
+      padding: const EdgeInsets.fromLTRB(ArdentSpacing.s4, ArdentSpacing.s5,
           ArdentSpacing.s4, ArdentSpacing.s5),
       decoration: const BoxDecoration(
         gradient: LinearGradient(

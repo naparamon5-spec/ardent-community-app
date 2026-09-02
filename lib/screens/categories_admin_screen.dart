@@ -6,7 +6,7 @@ import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
 
-/// Marketplace categories admin — list/create/delete (`/categories`).
+/// Marketplace categories admin — list/create/rename/hide/delete (`/categories`).
 /// Requires `module:admin.users`.
 class CategoriesAdminScreen extends StatefulWidget {
   const CategoriesAdminScreen({super.key});
@@ -48,6 +48,52 @@ class _CategoriesAdminScreenState extends State<CategoriesAdminScreen> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await Api.instance.categories.create(name);
+      if (!mounted) return;
+      setState(() => _reloadTick++);
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _rename(String id, String current) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final ctrl = TextEditingController(text: current);
+        return AlertDialog(
+          title: const Text('Rename category'),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(hintText: 'Category name'),
+            onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+                child: const Text('Save')),
+          ],
+        );
+      },
+    );
+    if (name == null || name.isEmpty || name == current || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await Api.instance.categories.update(id, name: name);
+      if (!mounted) return;
+      setState(() => _reloadTick++);
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _setActive(String id, bool active) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await Api.instance.categories.update(id, isActive: active);
       if (!mounted) return;
       setState(() => _reloadTick++);
     } on ApiException catch (e) {
@@ -126,10 +172,49 @@ class _CategoriesAdminScreenState extends State<CategoriesAdminScreen> {
                             label: 'Inactive',
                             fg: ArdentColors.fg2,
                             bg: ArdentColors.bgSubtle),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline_rounded,
-                            color: ArdentColors.accent),
-                        onPressed: () => _delete(id, name),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert_rounded,
+                            color: ArdentColors.navy600),
+                        onSelected: (value) {
+                          switch (value) {
+                            case 'rename':
+                              _rename(id, name);
+                            case 'toggle':
+                              _setActive(id, !active);
+                            case 'delete':
+                              _delete(id, name);
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                            value: 'rename',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.edit_outlined),
+                              title: Text('Rename'),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'toggle',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(active
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined),
+                              title: Text(active ? 'Hide' : 'Show'),
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.delete_outline_rounded,
+                                  color: ArdentColors.accent),
+                              title: Text('Delete',
+                                  style: TextStyle(color: ArdentColors.accent)),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
