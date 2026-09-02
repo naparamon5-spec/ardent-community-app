@@ -291,7 +291,7 @@ class _PostCardState extends State<PostCard> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
-                  DsAvatar(initials: post.author.initials, color: post.author.color, size: 36),
+                  DsAvatar(initials: post.author.initials, color: post.author.color, size: 36, imageUrl: post.author.avatarUrl),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -426,7 +426,7 @@ class _PostCardState extends State<PostCard> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DsAvatar(initials: post.author.initials, color: post.author.color, size: 42),
+        DsAvatar(initials: post.author.initials, color: post.author.color, size: 42, imageUrl: post.author.avatarUrl),
         const SizedBox(width: ArdentSpacing.s3),
         Expanded(
           child: Column(
@@ -1104,7 +1104,7 @@ class _PostCardState extends State<PostCard> {
           leading: Stack(
             clipBehavior: Clip.none,
             children: [
-              DsAvatar(initials: r.person.initials, color: r.person.color, size: 40),
+              DsAvatar(initials: r.person.initials, color: r.person.color, size: 40, imageUrl: r.person.avatarUrl),
               Positioned(
                 right: -2,
                 bottom: -2,
@@ -1153,7 +1153,8 @@ class _PostCardState extends State<PostCard> {
         DsAvatar(
             initials: AppSession.instance.me.initials,
             color: AppSession.instance.me.color,
-            size: replying ? 26 : 30),
+            size: replying ? 26 : 30,
+            imageUrl: AppSession.instance.me.avatarUrl),
         const SizedBox(width: 8),
         // Facebook-style rounded pill holding the field and inline actions.
         Expanded(
@@ -1391,7 +1392,7 @@ class _CommentTileState extends State<_CommentTile> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          DsAvatar(initials: c.author.initials, color: c.author.color, size: avatarSize),
+          DsAvatar(initials: c.author.initials, color: c.author.color, size: avatarSize, imageUrl: c.author.avatarUrl),
           const SizedBox(width: 8),
           Expanded(
             child: Column(

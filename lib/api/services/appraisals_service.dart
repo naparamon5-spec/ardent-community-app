@@ -22,9 +22,34 @@ class AppraisalsService {
   Future<Map<String, dynamic>> form(String id) async =>
       Map<String, dynamic>.from(await _api.get('/appraisals/$id/form') as Map);
 
+  /// `POST /appraisals/:id/items` — add a per-employee KPI/KRA row (e.g. PARS
+  /// forms that ship with blank indicator tables). Only the appraisal's
+  /// supervisor or `appraisal.manage`; the target [sectionId] must belong to
+  /// this form and allow custom items; 400 once released/acknowledged/closed.
+  /// Returns 201 with the created item.
+  Future<Map<String, dynamic>> addItem(
+    String id, {
+    required String label,
+    required String sectionId,
+    String? helpText,
+  }) async {
+    final data = await _api.post('/appraisals/$id/items', body: {
+      'label': label,
+      'sectionId': sectionId,
+      'helpText': ?helpText,
+    });
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// `DELETE /appraisals/:id/items/:itemId` — remove a custom KPI/KRA row (same
+  /// permission as adding; also deletes recorded responses and recomputes).
+  Future<void> deleteItem(String id, String itemId) =>
+      _api.delete('/appraisals/$id/items/$itemId');
+
   /// `PATCH /appraisals/:id/responses` — autosave answers (bulk upsert). Only
-  /// items belonging to this form and this rater's `role` are accepted; the
-  /// first save flips status to `in_progress`.
+  /// items belonging to this form and this rater's `role` are accepted (custom
+  /// items included); the first save flips status to `in_progress`. Each
+  /// response references exactly one of `itemId` (template) or `customItemId`.
   Future<Map<String, dynamic>> saveResponses(
     String id, {
     required String role,

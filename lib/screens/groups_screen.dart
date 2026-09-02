@@ -81,19 +81,18 @@ class _GroupsScreenState extends State<GroupsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              height: 72,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [g.color, g.color.withValues(alpha: 0.7)],
-                ),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(ArdentRadii.md)),
-              ),
-              alignment: Alignment.center,
-              child: const Icon(Icons.groups_rounded, color: Colors.white70, size: 30),
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(ArdentRadii.md)),
+              child: g.photoUrl.isNotEmpty
+                  ? Image.network(
+                      g.photoUrl,
+                      height: 72,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => _coverFallback(g),
+                    )
+                  : _coverFallback(g),
             ),
             Padding(
               padding: const EdgeInsets.all(ArdentSpacing.s4),
@@ -139,4 +138,18 @@ class _GroupsScreenState extends State<GroupsScreen> {
       ),
     );
   }
+
+  /// Gradient banner shown when a group has no cover photo (or it fails to load).
+  Widget _coverFallback(Group g) => Container(
+        height: 72,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [g.color, g.color.withValues(alpha: 0.7)],
+          ),
+        ),
+        alignment: Alignment.center,
+        child: const Icon(Icons.groups_rounded, color: Colors.white70, size: 30),
+      );
 }

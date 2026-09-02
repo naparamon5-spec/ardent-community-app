@@ -105,7 +105,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         leading: Stack(
           clipBehavior: Clip.none,
           children: [
-            DsAvatar(initials: n.actor.initials, color: n.actor.color, size: 46),
+            DsAvatar(initials: n.actor.initials, color: n.actor.color, size: 46, imageUrl: n.actor.avatarUrl),
             Positioned(
               right: -2,
               bottom: -2,

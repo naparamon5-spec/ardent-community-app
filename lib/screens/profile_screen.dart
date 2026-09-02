@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../api/api.dart';
 import '../api/session.dart';
@@ -7,7 +8,6 @@ import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
 import '../widgets/post_card.dart';
-import 'edit_profile_screen.dart';
 import 'settings_screen.dart';
 
 /// Profile — the signed-in user with web-parity tabs: Posts, Activities,
@@ -27,6 +27,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late Future<_ProfileData> _future;
   _Tab _tab = _Tab.posts;
   int _activityFilter = 0; // 0 All, 1 Posts, 2 Comments, 3 Groups, 4 Events
+  bool _uploadingAvatar = false;
+  bool _uploadingCover = false;
 
   @override
   void initState() {
@@ -78,7 +80,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             padding: EdgeInsets.zero,
             children: [
               _coverAndAvatar(me),
-              const SizedBox(height: 44),
+              const SizedBox(height: ArdentSpacing.s3),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
                 child: Column(
@@ -108,56 +110,269 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ---- Header ---------------------------------------------------------------
 
+  Widget _coverGradient() => Container(
+        height: 132,
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [ArdentColors.navy800, ArdentColors.navy900],
+          ),
+        ),
+      );
+
   Widget _coverAndAvatar(Person me) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          height: 132,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [ArdentColors.navy800, ArdentColors.navy900],
+    // A single fixed-height box holds everything as direct children so every
+    // control stays inside the Stack's bounds and remains tappable (Positioned
+    // children painted outside a Stack don't receive taps, even with Clip.none).
+    const coverH = 132.0;
+    const avatarBox = 92.0; // 84 avatar + 4 white ring on each side
+    const avatarLeft = ArdentSpacing.s4;
+    const avatarTop = 90.0; // overhangs the cover
+    const headerH = avatarTop + avatarBox + 6; // 188
+    return SizedBox(
+      height: headerH,
+      width: double.infinity,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Cover photo / gradient.
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: coverH,
+            child: me.coverUrl.isEmpty
+                ? _coverGradient()
+                : Image.network(
+                    me.coverUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => _coverGradient(),
+                  ),
+          ),
+          if (_uploadingCover)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: coverH,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: Color(0x55000000)),
+                child: Center(
+                  child: SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+          // ⋯ menu for the cover photo (top-right).
+          Positioned(
+            top: ArdentSpacing.s3,
+            right: ArdentSpacing.s3,
+            child: _dotButton(onTap: _uploadingCover ? null : _coverMenu),
+          ),
+          // Avatar (overhangs the cover but stays within this box).
+          Positioned(
+            left: avatarLeft,
+            top: avatarTop,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration:
+                  const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+              child: DsAvatar(
+                  initials: me.initials,
+                  color: me.color,
+                  size: 84,
+                  imageUrl: me.avatarUrl),
             ),
           ),
-        ),
-        Positioned(
-          left: ArdentSpacing.s4,
-          bottom: -36,
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-            child: DsAvatar(initials: me.initials, color: me.color, size: 84),
+          if (_uploadingAvatar)
+            const Positioned(
+              left: avatarLeft + 4,
+              top: avatarTop + 4,
+              width: 84,
+              height: 84,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                    color: Color(0x66000000), shape: BoxShape.circle),
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+          // ⋯ menu badge for the profile picture (bottom-right of the avatar).
+          Positioned(
+            left: avatarLeft + avatarBox - 26,
+            top: avatarTop + avatarBox - 26,
+            child: _dotButton(
+                onTap: _uploadingAvatar ? null : _avatarMenu, size: 30),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
+  /// A round white ⋯ button used to open a photo menu.
+  Widget _dotButton({required VoidCallback? onTap, double size = 34}) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 1.5,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Icon(Icons.more_horiz_rounded,
+              size: size * 0.55, color: ArdentColors.fg2),
+        ),
+      ),
+    );
+  }
+
+  void _coverMenu() {
+    _photoSheet(
+      title: 'Cover photo',
+      actionLabel: AppSession.instance.me.coverUrl.isEmpty
+          ? 'Upload cover photo'
+          : 'Change cover photo',
+      icon: Icons.image_outlined,
+      onPick: _changeCover,
+    );
+  }
+
+  void _avatarMenu() {
+    _photoSheet(
+      title: 'Profile picture',
+      actionLabel: AppSession.instance.me.avatarUrl.isEmpty
+          ? 'Upload profile picture'
+          : 'Change profile picture',
+      icon: Icons.person_outline_rounded,
+      onPick: _changeAvatar,
+    );
+  }
+
+  /// Bottom-sheet menu opened by a ⋯ button, offering the photo action.
+  void _photoSheet({
+    required String title,
+    required String actionLabel,
+    required IconData icon,
+    required Future<void> Function() onPick,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  ArdentSpacing.s5, 0, ArdentSpacing.s5, ArdentSpacing.s2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(title,
+                    style: Theme.of(ctx)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+              ),
+            ),
+            ListTile(
+              leading: Icon(icon, color: ArdentColors.accent),
+              title: Text(actionLabel),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onPick();
+              },
+            ),
+            const SizedBox(height: ArdentSpacing.s2),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _changeAvatar() async {
+    await _pickAndUpload(
+      isCover: false,
+      onUploading: (v) => setState(() => _uploadingAvatar = v),
+    );
+  }
+
+  Future<void> _changeCover() async {
+    await _pickAndUpload(
+      isCover: true,
+      onUploading: (v) => setState(() => _uploadingCover = v),
+    );
+  }
+
+  /// Picks an image and uploads it as the avatar or cover, then refreshes the
+  /// session so it shows immediately on mobile (and the web — same account).
+  Future<void> _pickAndUpload({
+    required bool isCover,
+    required void Function(bool) onUploading,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final picked = await ImagePicker()
+          .pickImage(source: ImageSource.gallery, imageQuality: 88);
+      if (picked == null) return;
+      onUploading(true);
+      final bytes = await picked.readAsBytes();
+      final name = picked.name.isEmpty
+          ? (isCover ? 'cover.jpg' : 'avatar.jpg')
+          : picked.name;
+      final contentType = 'image/${_ext(name, fallback: 'jpeg')}';
+      if (isCover) {
+        await Api.instance.users
+            .uploadCover(bytes: bytes, filename: name, contentType: contentType);
+      } else {
+        await Api.instance.users
+            .uploadAvatar(bytes: bytes, filename: name, contentType: contentType);
+      }
+      await AppSession.instance.loadMe();
+      if (!mounted) return;
+      onUploading(false);
+      messenger.showSnackBar(SnackBar(
+          content: Text(isCover ? 'Cover photo updated' : 'Profile picture updated')));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      onUploading(false);
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      if (!mounted) return;
+      onUploading(false);
+      messenger.showSnackBar(const SnackBar(content: Text('Could not update photo')));
+    }
+  }
+
+  static String _ext(String name, {required String fallback}) {
+    final i = name.lastIndexOf('.');
+    if (i < 0 || i == name.length - 1) return fallback;
+    return name.substring(i + 1).toLowerCase();
+  }
+
   Widget _actions(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const EditProfileScreen()),
-              );
-              if (mounted) _refresh();
-            },
-            icon: const Icon(Icons.edit_rounded, size: 16),
-            label: const Text('Edit profile'),
-          ),
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const SettingsScreen()),
         ),
-        const SizedBox(width: ArdentSpacing.s3),
-        OutlinedButton(
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          ),
-          child: const Icon(Icons.settings_outlined, size: 18),
-        ),
-      ],
+        icon: const Icon(Icons.settings_outlined, size: 18),
+        label: const Text('Profile settings'),
+      ),
     );
   }
 

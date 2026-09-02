@@ -257,7 +257,8 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
                         DsAvatar(
                             initials: AppSession.instance.me.initials,
                             color: AppSession.instance.me.color,
-                            size: 44),
+                            size: 44,
+                            imageUrl: AppSession.instance.me.avatarUrl),
                         const SizedBox(width: ArdentSpacing.s3),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -374,7 +375,7 @@ class _CreatePostSheetState extends State<_CreatePostSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Row(
                   children: [
-                    DsAvatar(initials: p.initials, color: p.color, size: 34),
+                    DsAvatar(initials: p.initials, color: p.color, size: 34, imageUrl: p.avatarUrl),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(

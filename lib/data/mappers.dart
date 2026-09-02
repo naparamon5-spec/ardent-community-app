@@ -111,6 +111,44 @@ DateTime? _parseDate(dynamic v) {
   return DateTime.tryParse('$v')?.toLocal();
 }
 
+/// Philippine Standard Time is a fixed UTC+8 (no DST). The backend stores UTC
+/// and the web renders in Manila time, so we display in Manila on every device —
+/// otherwise an emulator/phone set to another zone shows the wrong wall-clock.
+const Duration kManilaOffset = Duration(hours: 8);
+
+/// True when [s] already carries a timezone (`Z`, or a `+HH:MM` / `-HHMM`
+/// offset), so [DateTime.tryParse] interpreted it correctly.
+bool _hasTimezone(String s) {
+  final t = s.contains('T') ? s.substring(s.indexOf('T') + 1) : s;
+  if (t.endsWith('Z') || t.endsWith('z')) return true;
+  return RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(t);
+}
+
+/// Parses a backend timestamp as a true UTC instant. A string without any
+/// timezone marker is assumed to be UTC (the backend's convention), rather than
+/// the device's local zone as [DateTime.tryParse] would default to.
+DateTime? _parseUtc(dynamic v) {
+  if (v == null) return null;
+  if (v is DateTime) return v.toUtc();
+  final s = '$v'.trim();
+  if (s.isEmpty) return null;
+  final parsed = DateTime.tryParse(s);
+  if (parsed == null) return null;
+  if (parsed.isUtc || _hasTimezone(s)) return parsed.toUtc();
+  // Naive timestamp → re-tag its wall-clock fields as UTC.
+  return DateTime.utc(parsed.year, parsed.month, parsed.day, parsed.hour,
+      parsed.minute, parsed.second, parsed.millisecond, parsed.microsecond);
+}
+
+/// A backend timestamp as Asia/Manila wall-clock time. Read its `.hour`/`.day`/…
+/// fields for display; its absolute instant is intentionally shifted, so don't
+/// compare it against a raw `DateTime.now()` — use [manilaNow] instead.
+DateTime? parseManilaTime(dynamic v) => _parseUtc(v)?.add(kManilaOffset);
+
+/// "Now" as Asia/Manila wall-clock, to pair with [parseManilaTime] for
+/// same-day / relative comparisons.
+DateTime manilaNow() => DateTime.now().toUtc().add(kManilaOffset);
+
 /// Compact presence age used for "last active" labels — mirrors the web store's
 /// formatter exactly: `Just now`, `5m`, `3h`, `2d`, `4w`, then a locale date.
 /// Returns `''` when the timestamp is missing or unparseable.
@@ -193,6 +231,10 @@ Person personFromJson(dynamic value) {
       ? _str(_pick(json, ['initials']))
       : initialsFrom(name);
   final online = _bool(_pick(json, ['online', 'isOnline']));
+  final avatar = _mediaItem(_pick(json,
+      ['avatarUrl', 'avatar', 'photoUrl', 'photo', 'image', 'imageUrl', 'picture', 'pictureUrl', 'profilePhoto', 'profilePhotoUrl']));
+  final cover = _mediaItem(_pick(json,
+      ['coverUrl', 'cover', 'coverPhoto', 'coverPhotoUrl', 'banner', 'bannerUrl']));
   return Person(
     id: id,
     name: name,
@@ -207,6 +249,8 @@ Person personFromJson(dynamic value) {
     department: _str(_pick(json, ['department', 'dept'])),
     location: _str(_pick(json, ['location'])),
     bio: _str(_pick(json, ['bio', 'about'])),
+    avatarUrl: avatar?.url ?? '',
+    coverUrl: cover?.url ?? '',
   );
 }
 
@@ -238,9 +282,10 @@ MediaItem? _mediaItem(dynamic value) {
     return MediaItem(url: MediaService.resolve(value), type: _mediaType(value, null));
   }
   final m = asMap(value);
-  final rawUrl = _str(_pick(m, ['url', 'src', 'path', 'href', 'link', 'downloadUrl']));
+  final rawUrl = _str(_pick(m, ['url', 'src', 'path', 'href', 'link', 'downloadUrl', 'fileUrl']));
   if (rawUrl.isEmpty) return null;
-  final type = _mediaType(rawUrl, _pick(m, ['type', 'mimeType', 'kind', 'contentType']));
+  final type = _mediaType(rawUrl,
+      _pick(m, ['type', 'mimeType', 'mime', 'contentType', 'fileType', 'kind', 'format']));
   final name = _str(_pick(m, ['fileName', 'filename', 'name', 'originalName']));
   final vc = _pick(m, ['viewCount', 'views', 'seenCount']);
   final reaction = _pick(m, ['myReaction', 'reaction']);
@@ -525,6 +570,7 @@ Listing listingFromJson(dynamic value) {
     category: category is Map ? _str(_pick(category, ['name'])) : _str(category, 'Other'),
     seller: seller.name,
     sellerId: seller.id,
+    sellerAvatarUrl: seller.avatarUrl,
     color: avatarColorFor(seller.id.isNotEmpty ? seller.id : id),
     free: free,
     description: _str(_pick(json, ['description', 'desc'])),
@@ -553,6 +599,7 @@ Story storyFromJson(dynamic value) {
     media: mediaFromJson(json),
     caption: _str(_pick(json, ['caption', 'text'])),
     isMine: _bool(_pick(json, ['isMine', 'mine'])),
+    avatarUrl: author.avatarUrl,
   );
 }
 
@@ -584,6 +631,13 @@ Group groupFromJson(dynamic value) {
       parseColor(_pick(json, ['color'])) ??
       avatarColorFor(id);
 
+  // A group's own cover/avatar photo; direct threads use the counterpart avatar.
+  final photoItem = _mediaItem(_pick(json,
+      ['photo', 'photoUrl', 'image', 'imageUrl', 'avatar', 'avatarUrl', 'cover', 'coverUrl', 'banner']));
+  final photoUrl = otherPerson != null
+      ? otherPerson.avatarUrl
+      : (photoItem != null && photoItem.url.isNotEmpty ? photoItem.url : '');
+
   return Group(
     id: id,
     name: name,
@@ -595,6 +649,7 @@ Group groupFromJson(dynamic value) {
     pending: pending,
     online: otherPerson?.online ?? false,
     lastActive: otherPerson?.lastActive ?? '',
+    photoUrl: photoUrl,
   );
 }
 

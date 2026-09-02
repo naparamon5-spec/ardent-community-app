@@ -23,6 +23,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   Person get person => widget.person;
 
+  Widget _coverGradient() => Container(
+        height: 150,
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [ArdentColors.navy700, ArdentColors.navy900],
+          ),
+        ),
+      );
+
   @override
   void initState() {
     super.initState();
@@ -50,15 +62,18 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           Stack(
             clipBehavior: Clip.none,
             children: [
-              Container(
+              SizedBox(
                 height: 150,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [ArdentColors.navy700, ArdentColors.navy900],
-                  ),
-                ),
+                width: double.infinity,
+                child: person.coverUrl.isEmpty
+                    ? _coverGradient()
+                    : Image.network(
+                        person.coverUrl,
+                        height: 150,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => _coverGradient(),
+                      ),
               ),
               Positioned(
                 left: ArdentSpacing.s4,
@@ -71,6 +86,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       initials: person.initials,
                       color: person.color,
                       size: 84,
+                      imageUrl: person.avatarUrl,
                       online: person.online),
                 ),
               ),

@@ -19,6 +19,8 @@ class Person {
     this.department = '',
     this.location = '',
     this.bio = '',
+    this.avatarUrl = '',
+    this.coverUrl = '',
   });
 
   final String id;
@@ -32,6 +34,13 @@ class Person {
   final String department;
   final String location;
   final String bio;
+
+  /// Absolute URL of the user's uploaded profile photo, when set on the web or
+  /// mobile (empty → fall back to the coloured initials avatar).
+  final String avatarUrl;
+
+  /// Absolute URL of the user's uploaded cover photo, when set.
+  final String coverUrl;
 }
 
 class Reaction {
@@ -237,12 +246,16 @@ class Group {
     this.pending = false,
     this.online = false,
     this.lastActive = '',
+    this.photoUrl = '',
   });
   final String id;
   final String name;
   final int members;
   final Color color;
   final String desc;
+
+  /// Absolute URL of the group's cover/avatar photo, when one is set.
+  final String photoUrl;
 
   /// True for a 1:1 direct-message thread rather than a named group.
   final bool isDirect;
@@ -271,6 +284,7 @@ class Listing {
     this.free = false,
     this.description = '',
     this.sellerId = '',
+    this.sellerAvatarUrl = '',
     this.likeCount = 0,
     this.sold = false,
     this.posted = '',
@@ -287,6 +301,9 @@ class Listing {
   final bool free;
   final String description;
   final String sellerId;
+
+  /// The seller's uploaded profile photo, when set.
+  final String sellerAvatarUrl;
   int likeCount;
   final bool sold;
   final String posted;
@@ -305,11 +322,15 @@ class Story {
     this.media = const [],
     this.caption = '',
     this.isMine = false,
+    this.avatarUrl = '',
   });
   final String id;
 
   /// The story author's user id — used to tell "my story" from someone else's.
   final String authorId;
+
+  /// The story author's uploaded profile photo, when set.
+  final String avatarUrl;
   final String name;
   final String initials;
   final Color color;

@@ -8,11 +8,18 @@ class PostsService {
   PostsService(this._api);
   final ApiClient _api;
 
-  /// `GET /posts?type=&limit=&offset=` — feed, pinned first then newest.
-  /// `limit` ≤ 100 (default 20).
-  Future<List<dynamic>> feed({String? type, int? limit, int? offset}) async {
-    final data = await _api
-        .get('/posts', query: {'type': type, 'limit': limit, 'offset': offset});
+  /// `GET /posts?type=&limit=&offset=&before=` — feed, pinned first then newest.
+  /// `limit` ≤ 100 (default 20). [before] is an ISO `createdAt` cursor (from the
+  /// oldest unpinned post already held) for scrolling further back — an
+  /// alternative to [offset].
+  Future<List<dynamic>> feed(
+      {String? type, int? limit, int? offset, String? before}) async {
+    final data = await _api.get('/posts', query: {
+      'type': type,
+      'limit': limit,
+      'offset': offset,
+      'before': before,
+    });
     return data is List ? data : const [];
   }
 
@@ -29,20 +36,36 @@ class PostsService {
   /// `POST /posts` — create a post (`module:feed.post`). Returns 201.
   ///
   /// [fields] carries the JSON payload (`type`, `text`, `title`, `note`,
-  /// `signoff`, `lines`, `details`, `pinned`, `kudosTo`, `pollOptions`,
-  /// `pollMultiple`, `sharedPostId`, `mentions`, …). Optional [photo]/[file]
-  /// attachments use the `postUpload` preset. When attachments are present the
-  /// request is sent as multipart (array/object fields become JSON strings).
+  /// `signoff`, `lines`, `details`, `pinned`, `kudosTo`, `groupId`,
+  /// `pollOptions`, `pollMultiple`, `sharedPostId`, `mentions`, …).
+  ///
+  /// Attachments use the `postUpload` preset: [media] carries up to 10 images
+  /// (`media[]`) and [files] up to 10 documents (`files[]`). The singular
+  /// [photo]/[file] params remain for older callers; a post never mixes the two
+  /// shapes. When any attachment is present the request is sent as multipart
+  /// (array/object fields become JSON strings).
   Future<Map<String, dynamic>> create({
     required Map<String, dynamic> fields,
+    List<({Uint8List bytes, String filename, String? contentType})> media =
+        const [],
+    List<({Uint8List bytes, String filename, String? contentType})> files =
+        const [],
     ({Uint8List bytes, String filename, String? contentType})? photo,
     ({Uint8List bytes, String filename, String? contentType})? file,
   }) async {
-    if (photo == null && file == null) {
-      final data = await _api.post('/posts', body: fields);
-      return Map<String, dynamic>.from(data as Map);
-    }
-    final files = <UploadFile>[
+    final uploads = <UploadFile>[
+      for (final m in media)
+        UploadFile(
+            field: 'media',
+            filename: m.filename,
+            bytes: m.bytes,
+            contentType: m.contentType),
+      for (final f in files)
+        UploadFile(
+            field: 'files',
+            filename: f.filename,
+            bytes: f.bytes,
+            contentType: f.contentType),
       if (photo != null)
         UploadFile(
             field: 'photo',
@@ -56,8 +79,12 @@ class PostsService {
             bytes: file.bytes,
             contentType: file.contentType),
     ];
+    if (uploads.isEmpty) {
+      final data = await _api.post('/posts', body: fields);
+      return Map<String, dynamic>.from(data as Map);
+    }
     final data =
-        await _api.multipart('POST', '/posts', fields: fields, files: files);
+        await _api.multipart('POST', '/posts', fields: fields, files: uploads);
     return Map<String, dynamic>.from(data as Map);
   }
 
@@ -83,6 +110,50 @@ class PostsService {
     return Map<String, dynamic>.from(data as Map);
   }
 
+  /// `PATCH /posts/:id/comments/:commentId` — edit your own comment (author
+  /// only, 403 otherwise). Stamps `editedAt`; only newly-added mentions notify.
+  Future<Map<String, dynamic>> editComment(
+    String id,
+    String commentId, {
+    required String text,
+    List<String>? mentions,
+  }) async {
+    final data = await _api.patch('/posts/$id/comments/$commentId', body: {
+      'text': text,
+      'mentions': ?mentions,
+    });
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  /// `DELETE /posts/:id/comments/:commentId` — delete a comment (author, the
+  /// post's owner, or `admin.users`). Returns
+  /// `{ outcome: 'tombstoned' | 'removed', commentId, post }`.
+  Future<Map<String, dynamic>> deleteComment(String id, String commentId) async =>
+      Map<String, dynamic>.from(
+          await _api.delete('/posts/$id/comments/$commentId') as Map);
+
+  /// `PUT /posts/:id/comments/:commentId/reaction` — set/replace your reaction
+  /// to a comment. [type] ∈ `like | celebrate | support | insightful`.
+  Future<Map<String, dynamic>> setCommentReaction(
+    String id,
+    String commentId,
+    String type,
+  ) async =>
+      Map<String, dynamic>.from(await _api.put(
+          '/posts/$id/comments/$commentId/reaction',
+          body: {'type': type}) as Map);
+
+  /// `DELETE /posts/:id/comments/:commentId/reaction` — remove your reaction to
+  /// a comment.
+  Future<void> removeCommentReaction(String id, String commentId) =>
+      _api.delete('/posts/$id/comments/$commentId/reaction');
+
+  /// `GET /posts/:id/comments/:commentId/reactions` — who reacted to a comment
+  /// (`{ commentId, total, people: [{...author, reaction}] }`).
+  Future<Map<String, dynamic>> commentReactions(String id, String commentId) async =>
+      Map<String, dynamic>.from(
+          await _api.get('/posts/$id/comments/$commentId/reactions') as Map);
+
   /// `PUT /posts/:id/reaction` — set/replace your reaction.
   /// [type] ∈ `like | celebrate | support | insightful`.
   Future<Map<String, dynamic>> setReaction(String id, String type) async =>
@@ -91,6 +162,16 @@ class PostsService {
 
   /// `DELETE /posts/:id/reaction` — remove your reaction.
   Future<void> removeReaction(String id) => _api.delete('/posts/$id/reaction');
+
+  /// `GET /posts/:id/reactions` — who reacted to the post, grouped and flat
+  /// (`{ total, byType: {...}, people: [{...author, reaction}] }`).
+  Future<Map<String, dynamic>> reactions(String id) async =>
+      Map<String, dynamic>.from(await _api.get('/posts/$id/reactions') as Map);
+
+  /// `GET /posts/:id/sharers` — who shared the post
+  /// (`{ total, unattributed, people: [{...author, sharedAt}] }`).
+  Future<Map<String, dynamic>> sharers(String id) async =>
+      Map<String, dynamic>.from(await _api.get('/posts/$id/sharers') as Map);
 
   /// `PUT /posts/:id/save` — save the post.
   Future<void> save(String id) => _api.put('/posts/$id/save');

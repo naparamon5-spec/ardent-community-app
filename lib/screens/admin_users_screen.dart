@@ -83,6 +83,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                           initials: person.initials,
                           color: person.color,
                           active: active,
+                          imageUrl: person.avatarUrl,
                         ),
                         title: Text(person.name,
                             style: text.titleMedium?.copyWith(fontSize: 15)),
@@ -144,6 +145,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   color: person.color,
                   active: active,
                   size: 64,
+                  imageUrl: person.avatarUrl,
                 ),
               ),
               const SizedBox(height: ArdentSpacing.s3),
@@ -188,12 +190,14 @@ class _AvatarWithStatus extends StatelessWidget {
     required this.color,
     required this.active,
     this.size = 42,
+    this.imageUrl,
   });
 
   final String initials;
   final Color color;
   final bool active;
   final double size;
+  final String? imageUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -201,7 +205,7 @@ class _AvatarWithStatus extends StatelessWidget {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        DsAvatar(initials: initials, color: color, size: size),
+        DsAvatar(initials: initials, color: color, size: size, imageUrl: imageUrl),
         Positioned(
           right: -1,
           bottom: -1,

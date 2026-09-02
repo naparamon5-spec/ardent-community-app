@@ -12,6 +12,7 @@ class DsAvatar extends StatelessWidget {
     required this.color,
     this.size = 40,
     this.online,
+    this.imageUrl,
   });
 
   final String initials;
@@ -21,9 +22,13 @@ class DsAvatar extends StatelessWidget {
   /// When non-null, draws a presence dot (green online / gray offline).
   final bool? online;
 
+  /// The user's uploaded profile photo. When set (and it loads), it replaces
+  /// the coloured initials circle; a load failure falls back to the initials.
+  final String? imageUrl;
+
   @override
   Widget build(BuildContext context) {
-    final avatar = Container(
+    final initialsAvatar = Container(
       width: size,
       height: size,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
@@ -37,6 +42,17 @@ class DsAvatar extends StatelessWidget {
         ),
       ),
     );
+    final avatar = (imageUrl == null || imageUrl!.isEmpty)
+        ? initialsAvatar
+        : ClipOval(
+            child: Image.network(
+              imageUrl!,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => initialsAvatar,
+            ),
+          );
     if (online == null) return avatar;
     return Stack(
       clipBehavior: Clip.none,

@@ -41,4 +41,55 @@ class AdminService {
   /// (refused if the account is deactivated).
   Future<void> resendInvite(String id) =>
       _api.post('/admin/users/$id/resend-invite');
+
+  // ---- System log (audit & errors) ------------------------------------------
+
+  /// `GET /admin/audit` — administrative-action audit events, newest first.
+  /// Optional filters `action`, `actorId`, `entityId`; `limit` default 100
+  /// (max 300).
+  Future<List<dynamic>> audit({
+    String? action,
+    String? actorId,
+    String? entityId,
+    int? limit,
+  }) async {
+    final data = await _api.get('/admin/audit', query: {
+      'action': action,
+      'actorId': actorId,
+      'entityId': entityId,
+      'limit': limit,
+    });
+    return data is List ? data : const [];
+  }
+
+  /// `GET /admin/errors` — server-error events (deduplicated by fingerprint)
+  /// plus a `summary`. Returns the raw payload (`{ errors, summary }`).
+  /// `includeResolved` default false; optional `source`; `limit` default 100
+  /// (max 300).
+  Future<Map<String, dynamic>> errors({
+    bool? includeResolved,
+    String? source,
+    int? limit,
+  }) async =>
+      Map<String, dynamic>.from(await _api.get('/admin/errors', query: {
+        'includeResolved': includeResolved,
+        'source': source,
+        'limit': limit,
+      }) as Map);
+
+  /// `POST /admin/errors/:id/resolve` — mark an error as handled.
+  Future<void> resolveError(String id) =>
+      _api.post('/admin/errors/$id/resolve');
+
+  // ---- Background jobs ------------------------------------------------------
+
+  /// `GET /admin/jobs` — status of every registered background job. Returns
+  /// `{ jobs: [{name, enabled, everyMs, lastRunAt, lastStatus, ...}] }`.
+  Future<Map<String, dynamic>> jobs() async =>
+      Map<String, dynamic>.from(await _api.get('/admin/jobs') as Map);
+
+  /// `POST /admin/jobs/:name/run` — run one job immediately, ignoring its
+  /// schedule (404 for an unknown job). Returns the refreshed job-status list.
+  Future<Map<String, dynamic>> runJob(String name) async =>
+      Map<String, dynamic>.from(await _api.post('/admin/jobs/$name/run') as Map);
 }

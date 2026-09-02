@@ -342,7 +342,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
   Widget _dmTile(Group g) {
     return _row(
-      avatar: DsAvatar(initials: initialsFrom(g.name), color: g.color, size: 48),
+      avatar: DsAvatar(initials: initialsFrom(g.name), color: g.color, size: 48, imageUrl: g.photoUrl),
       title: g.name,
       subtitle: Row(
         children: [
@@ -358,19 +358,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
   Widget _groupTile(Group g) {
     return _row(
-      avatar: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [g.color, Color.lerp(g.color, Colors.black, 0.28)!],
-          ),
-          borderRadius: BorderRadius.circular(ArdentRadii.md),
-        ),
-        child: const Icon(Icons.groups_rounded, color: Colors.white),
-      ),
+      avatar: _groupAvatar(g),
       title: g.name,
       subtitle: _subtitle('${g.members} member${g.members == 1 ? '' : 's'}'),
       trailing: g.joined
@@ -380,10 +368,39 @@ class _ChatsScreenState extends State<ChatsScreen> {
     );
   }
 
+  /// A group's 48px avatar — its uploaded photo when set, else the gradient
+  /// group-icon fallback (also used if the photo fails to load).
+  Widget _groupAvatar(Group g) {
+    final fallback = Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [g.color, Color.lerp(g.color, Colors.black, 0.28)!],
+        ),
+        borderRadius: BorderRadius.circular(ArdentRadii.md),
+      ),
+      child: const Icon(Icons.groups_rounded, color: Colors.white),
+    );
+    if (g.photoUrl.isEmpty) return fallback;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(ArdentRadii.md),
+      child: Image.network(
+        g.photoUrl,
+        width: 48,
+        height: 48,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback,
+      ),
+    );
+  }
+
   Widget _personTile(Person p) {
     return _row(
       avatar: DsAvatar(
-          initials: p.initials, color: p.color, size: 48, online: p.online),
+          initials: p.initials, color: p.color, size: 48, online: p.online, imageUrl: p.avatarUrl),
       title: p.name,
       subtitle: _subtitle(
         p.online ? 'Active now' : p.lastActive,

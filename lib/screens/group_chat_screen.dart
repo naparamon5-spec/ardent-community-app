@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,6 +12,7 @@ import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/ds.dart';
+import 'user_profile_screen.dart';
 
 /// A group / direct-message conversation. Loads and sends messages, and — for a
 /// group the user hasn't joined — shows a join panel *inside* the screen instead
@@ -30,6 +32,16 @@ class _ReplyInfo {
   final String text;
 }
 
+/// One @mention carried by a message. The chat payload gives mentions as either
+/// full user objects or bare ids, so we keep whichever we got and resolve it to
+/// a real [Person] (with an id to open the profile) against the group roster at
+/// render time.
+class _Mention {
+  const _Mention({this.id, this.name});
+  final String? id;
+  final String? name;
+}
+
 class _ChatMessage {
   _ChatMessage({
     required this.text,
@@ -41,13 +53,23 @@ class _ChatMessage {
     this.reactions = const {},
     this.myReaction,
     this.replyTo,
+    this.mentions = const [],
+    this.system = false,
   });
   final String id;
   final String text;
   final Person author;
   final bool mine;
+
+  /// A server-generated activity line ("X added Y to the group", "X left…") —
+  /// rendered as a centered notice, not a chat bubble.
+  final bool system;
   final DateTime? time;
   final List<MediaItem> media;
+
+  /// People @mentioned in [text] — used to bold those spans and make them tap
+  /// through to the mentioned person's profile.
+  final List<_Mention> mentions;
 
   /// Emoji → count, aggregated across everyone who reacted.
   final Map<String, int> reactions;
@@ -72,6 +94,8 @@ class _ChatMessage {
       reactions: reactions ?? this.reactions,
       myReaction: clearMyReaction ? null : (myReaction ?? this.myReaction),
       replyTo: replyTo,
+      mentions: mentions,
+      system: system,
     );
   }
 }
@@ -90,18 +114,82 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   late bool _joined = widget.group.isDirect || widget.group.joined;
   late bool _pending = widget.group.pending;
 
+  /// The group's members, used to resolve @mentions to a full [Person] — both
+  /// to render the name bold and to open their profile when tapped (the message
+  /// text/payload may carry only a mention user id).
+  List<Person> _members = const [];
+
+  /// Group-chat socket events aren't pinned down in the API doc (only presence
+  /// and calls are), so we listen on the common candidate names. An unmatched
+  /// name is simply never delivered — harmless.
+  static const _chatEvents = [
+    'group:message',
+    'group:messages',
+    'group:activity',
+    'group:update',
+    'chat:message',
+    'message:new',
+    'message',
+    'groupMessage',
+  ];
+
   @override
   void initState() {
     super.initState();
     if (_joined) {
       _loadMessages();
+      _loadMembers();
+      _subscribeRealtime();
     } else {
       _loading = false; // show the join panel
     }
   }
 
+  void _subscribeRealtime() {
+    for (final e in _chatEvents) {
+      Api.instance.realtime.on(e, _onRealtimeChat);
+    }
+  }
+
+  void _unsubscribeRealtime() {
+    for (final e in _chatEvents) {
+      Api.instance.realtime.off(e);
+    }
+  }
+
+  /// A chat/activity socket event arrived. Refresh only when it concerns this
+  /// group (or carries no group id we can check).
+  void _onRealtimeChat(dynamic data) {
+    if (!mounted || !_joined) return;
+    final map = asMap(data is Map ? (data['message'] ?? data) : data);
+    final gid = '${map['groupId'] ?? map['group'] ?? map['conversationId'] ?? ''}';
+    if (gid.isNotEmpty && gid != widget.group.id) return;
+    _refreshMessages();
+    // A membership change may also add/remove people we resolve mentions from.
+    _loadMembers();
+  }
+
+  Future<void> _loadMembers() async {
+    try {
+      final raw = await Api.instance.groups.members(widget.group.id);
+      final people = raw
+          .map((e) {
+            final map = asMap(e);
+            // Members may arrive as bare users or as membership wrappers.
+            return personFromJson(map['user'] ?? map['member'] ?? e);
+          })
+          .where((p) => p.name.trim().isNotEmpty && p.name != 'Unknown')
+          .toList();
+      if (!mounted) return;
+      setState(() => _members = people);
+    } catch (_) {
+      // Non-fatal: mention bolding falls back to a generic @token match.
+    }
+  }
+
   @override
   void dispose() {
+    _unsubscribeRealtime();
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
@@ -112,17 +200,94 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final author = personFromJson(m['author'] ?? m['user'] ?? m['sender']);
     final t = m['createdAt'] ?? m['created_at'] ?? m['time'] ?? m['sentAt'];
     final (reactions, mine) = _parseReactions(m['reactions']);
+    final type =
+        '${m['type'] ?? m['messageType'] ?? m['kind'] ?? m['event'] ?? m['action'] ?? ''}'
+            .toLowerCase();
+    final rawText =
+        (m['text'] ?? m['body'] ?? m['message'] ?? m['content'] ?? '').toString();
+    // The backend labels activity lines by prefixing the text with "System:"
+    // (e.g. "System: Dhariel added Ramon to the group."). Detect that too, and
+    // strip the prefix so the centered notice reads cleanly.
+    final systemPrefix = RegExp(r'^\s*system\s*:\s*', caseSensitive: false);
+    final looksSystemText = systemPrefix.hasMatch(rawText);
+    final system = m['system'] == true ||
+        m['isSystem'] == true ||
+        m['isActivity'] == true ||
+        looksSystemText ||
+        const {'system', 'event', 'notice', 'activity', 'announcement'}
+            .contains(type) ||
+        type.startsWith('member') ||
+        type.contains('added') ||
+        type.contains('removed') ||
+        type.contains('invite') ||
+        type.contains('promot') ||
+        type.contains('join') ||
+        type.contains('left') ||
+        type.contains('leave');
+    final cleanedText =
+        looksSystemText ? rawText.replaceFirst(systemPrefix, '') : rawText;
     return _ChatMessage(
       id: '${m['id'] ?? m['_id'] ?? ''}',
-      text: (m['text'] ?? m['body'] ?? '').toString(),
+      text: system && cleanedText.trim().isEmpty
+          ? _composeSystemText(m, type)
+          : cleanedText,
       author: author,
-      mine: author.id.isNotEmpty && author.id == AppSession.instance.me.id,
-      time: t == null ? null : DateTime.tryParse('$t')?.toLocal(),
+      mine: !system &&
+          author.id.isNotEmpty &&
+          author.id == AppSession.instance.me.id,
+      time: parseManilaTime(t),
       media: mediaFromJson(m),
       reactions: reactions,
       myReaction: mine ?? (m['myReaction'] == null ? null : '${m['myReaction']}'),
       replyTo: _parseReply(m['replyTo'] ?? m['replyMessage'] ?? m['parent']),
+      mentions: _parseMentions(m['mentions'] ?? m['mentionedUsers'] ?? m['mentionUsers']),
+      system: system,
     );
+  }
+
+  /// Mentions carried by a message — either full user objects (name + id) or
+  /// bare ids/names. A value with a space is treated as a display name;
+  /// otherwise as an id/slug to resolve against the roster later.
+  List<_Mention> _parseMentions(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <_Mention>[];
+    for (final e in raw) {
+      if (e is Map) {
+        final p = personFromJson(e);
+        out.add(_Mention(
+          id: p.id.isEmpty ? null : p.id,
+          name: p.name == 'Unknown' ? null : p.name,
+        ));
+      } else if (e != null) {
+        final s = '$e'.trim();
+        if (s.isEmpty) continue;
+        out.add(s.contains(' ') ? _Mention(name: s) : _Mention(id: s));
+      }
+    }
+    return out;
+  }
+
+  /// Builds a readable activity line ("Dhariel added Rachelle to the group")
+  /// when the server sends a system message without ready-made text.
+  String _composeSystemText(Map m, String type) {
+    final actor = personFromJson(m['actor'] ?? m['author'] ?? m['user'] ?? m['sender']).name;
+    final target = personFromJson(
+            m['target'] ?? m['targetUser'] ?? m['member'] ?? m['subject'] ?? m['addedUser'] ?? m['to'])
+        .name;
+    final a = actor == 'Unknown' ? 'Someone' : actor;
+    final hasTarget = target.isNotEmpty && target != 'Unknown';
+    if (type.contains('add') || type.contains('invite')) {
+      return hasTarget ? '$a added $target to the group.' : '$a added a member.';
+    }
+    if (type.contains('remove')) {
+      return hasTarget ? '$a removed $target from the group.' : '$a removed a member.';
+    }
+    if (type.contains('promot')) {
+      return hasTarget ? '$a made $target an admin.' : '$a updated an admin.';
+    }
+    if (type.contains('join')) return '$a joined the group.';
+    if (type.contains('left') || type.contains('leave')) return '$a left the group.';
+    return hasTarget ? '$a · $target' : a;
   }
 
   /// Aggregates reactions from either a list of `{emoji, count/users, mine}`
@@ -219,6 +384,30 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  /// Re-fetches messages *without* the full-screen spinner — used for live
+  /// socket updates (new messages, "X added Y to the group" activity) so the
+  /// thread refreshes in place instead of flashing a loader.
+  Future<void> _refreshMessages() async {
+    if (!_joined) return;
+    try {
+      final raw = await Api.instance.groups.messages(widget.group.id, limit: 50);
+      final mapped = raw.map(_map).toList()
+        ..sort((a, b) {
+          if (a.time == null && b.time == null) return 0;
+          if (a.time == null) return -1;
+          if (b.time == null) return 1;
+          return a.time!.compareTo(b.time!);
+        });
+      if (!mounted) return;
+      final wasAtBottom = !_scroll.hasClients ||
+          _scroll.position.pixels >= _scroll.position.maxScrollExtent - 120;
+      setState(() => _messages = mapped);
+      if (wasAtBottom) _scrollToEnd();
+    } catch (_) {
+      // Non-fatal: the next manual load or reconnect will reconcile.
+    }
+  }
+
   Future<void> _join() async {
     if (_joining) return;
     setState(() => _joining = true);
@@ -234,6 +423,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _joining = false;
         });
         _loadMessages();
+        _loadMembers();
+        _subscribeRealtime();
       } else {
         setState(() {
           _pending = true;
@@ -282,7 +473,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         text: t,
         author: AppSession.instance.me,
         mine: true,
-        time: DateTime.now(),
+        time: manilaNow(),
         replyTo: _replyingTo == null
             ? null
             : _ReplyInfo(
@@ -367,8 +558,28 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   Widget _groupAvatar(Group g, double size) {
     if (g.isDirect) {
-      return DsAvatar(initials: initialsFrom(g.name), color: g.color, size: size);
+      return DsAvatar(
+          initials: initialsFrom(g.name),
+          color: g.color,
+          size: size,
+          imageUrl: g.photoUrl);
     }
+    if (g.photoUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(ArdentRadii.sm),
+        child: Image.network(
+          g.photoUrl,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _groupAvatarFallback(g, size),
+        ),
+      );
+    }
+    return _groupAvatarFallback(g, size);
+  }
+
+  Widget _groupAvatarFallback(Group g, double size) {
     return Container(
       width: size,
       height: size,
@@ -402,17 +613,29 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           final prev = i > 0 ? _messages[i - 1] : null;
           final next = i < _messages.length - 1 ? _messages[i + 1] : null;
 
+          final newDay = prev == null || !_sameDay(prev.time, m.time);
+
+          // System activity lines render as a centered notice, not a bubble.
+          if (m.system) {
+            return Column(
+              children: [
+                if (newDay) _daySeparator(m.time),
+                _systemMessage(m),
+              ],
+            );
+          }
+
           // Group consecutive messages by the same sender within ~5 minutes.
           final firstInGroup = prev == null ||
               prev.mine != m.mine ||
               prev.author.id != m.author.id ||
+              prev.system ||
               _gap(prev.time, m.time);
           final lastInGroup = next == null ||
               next.mine != m.mine ||
               next.author.id != m.author.id ||
+              next.system ||
               _gap(m.time, next.time);
-
-          final newDay = prev == null || !_sameDay(prev.time, m.time);
 
           return Column(
             children: [
@@ -442,6 +665,33 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
+  /// Centered gray notice for server activity ("X added Y to the group").
+  Widget _systemMessage(_ChatMessage m) {
+    final label = m.text.trim();
+    if (label.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: ArdentSpacing.s2),
+      child: Center(
+        child: Container(
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.82),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: ArdentColors.bgSubtle,
+            borderRadius: BorderRadius.circular(ArdentRadii.pill),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 12, height: 1.3, color: ArdentColors.fg3),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _daySeparator(DateTime? t) {
     final label = _dayLabel(t);
     if (label.isEmpty) return const SizedBox(height: 4);
@@ -466,7 +716,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   static String _dayLabel(DateTime? t) {
     if (t == null) return '';
-    final now = DateTime.now();
+    final now = manilaNow();
     final today = DateTime(now.year, now.month, now.day);
     final that = DateTime(t.year, t.month, t.day);
     final diff = today.difference(that).inDays;
@@ -620,7 +870,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   ? DsAvatar(
                       initials: m.author.initials,
                       color: m.author.color,
-                      size: 28)
+                      size: 28,
+                      imageUrl: m.author.avatarUrl)
                   : null,
             ),
             const SizedBox(width: 8),
@@ -683,6 +934,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _textBubble(_ChatMessage m, BorderRadius radius) {
+    final base = TextStyle(
+        fontSize: 14.5,
+        color: m.mine ? Colors.white : ArdentColors.fg1,
+        height: 1.35);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
@@ -690,11 +945,49 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         borderRadius: radius,
         border: m.mine ? null : Border.all(color: ArdentColors.border),
       ),
-      child: Text(m.text,
-          style: TextStyle(
-              fontSize: 14.5,
-              color: m.mine ? Colors.white : ArdentColors.fg1,
-              height: 1.35)),
+      child: _MentionText(
+        text: m.text,
+        baseStyle: base,
+        mentionStyle: base.copyWith(
+          fontWeight: FontWeight.w800,
+          color: m.mine ? Colors.white : ArdentColors.fg1,
+        ),
+        mentions: [
+          for (final men in m.mentions) ?_personForMention(men),
+        ],
+        roster: _members,
+        onTapUser: _openPerson,
+      ),
+    );
+  }
+
+  /// Resolves a parsed [_Mention] to a real [Person] — by id or name against
+  /// the group roster, falling back to a minimal person built from whatever the
+  /// mention carried (so bolding still works before the roster loads).
+  Person? _personForMention(_Mention men) {
+    for (final p in _members) {
+      if (men.id != null && p.id == men.id) return p;
+    }
+    if (men.name != null) {
+      final lower = men.name!.toLowerCase();
+      for (final p in _members) {
+        if (p.name.toLowerCase() == lower) return p;
+      }
+      return Person(
+        id: men.id ?? '',
+        name: men.name!,
+        initials: initialsFrom(men.name!),
+        role: '',
+        color: avatarColorFor(men.id ?? men.name!),
+      );
+    }
+    return null;
+  }
+
+  /// Opens a member's profile from a tapped @mention.
+  void _openPerson(Person p) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => UserProfileScreen(person: p)),
     );
   }
 
@@ -1808,6 +2101,121 @@ Future<void> _launch(BuildContext context, String url) async {
   if (!ok && context.mounted) {
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Could not open link')));
+  }
+}
+
+/// Renders message text with @mentions in bold, each tapping through to the
+/// mentioned person's profile. Only *resolved* mentions are styled — a
+/// confirmed mention (carried by the message) matches with or without a leading
+/// `@`, a roster member matches only when written as `@Name`, and anything else
+/// (e.g. a stray `@m`) stays plain, mirroring the web client.
+class _MentionText extends StatefulWidget {
+  const _MentionText({
+    required this.text,
+    required this.baseStyle,
+    required this.mentionStyle,
+    required this.mentions,
+    required this.roster,
+    required this.onTapUser,
+  });
+
+  final String text;
+  final TextStyle baseStyle;
+  final TextStyle mentionStyle;
+
+  /// People the message explicitly mentions (matched with or without `@`).
+  final List<Person> mentions;
+
+  /// The full group roster (matched only when written as `@Name`).
+  final List<Person> roster;
+
+  final void Function(Person) onTapUser;
+
+  @override
+  State<_MentionText> createState() => _MentionTextState();
+}
+
+class _MentionTextState extends State<_MentionText> {
+  final List<TapGestureRecognizer> _recognizers = [];
+  static final _word = RegExp(r'[\p{L}\p{N}_]', unicode: true);
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  void _disposeRecognizers() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Recognizers are recreated every build; drop the previous batch first.
+    _disposeRecognizers();
+    final text = widget.text;
+
+    // name(lowercase) → person. Confirmed mentions match with/without '@';
+    // roster names only match when prefixed with '@'.
+    final confirmed = <String, Person>{};
+    for (final p in widget.mentions) {
+      if (p.name.trim().isNotEmpty) confirmed[p.name.toLowerCase()] = p;
+    }
+    final rosterOnly = <String, Person>{};
+    for (final p in widget.roster) {
+      final k = p.name.toLowerCase();
+      if (p.name.trim().isNotEmpty && !confirmed.containsKey(k)) rosterOnly[k] = p;
+    }
+
+    if (confirmed.isEmpty && rosterOnly.isEmpty) {
+      return Text.rich(TextSpan(text: text, style: widget.baseStyle));
+    }
+
+    // Original-case display names, longest first so multi-word names win.
+    final originalByLower = <String, String>{};
+    for (final p in [...widget.mentions, ...widget.roster]) {
+      originalByLower.putIfAbsent(p.name.toLowerCase(), () => p.name);
+    }
+    final confirmedNames = confirmed.keys.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    final rosterNames = rosterOnly.keys.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+
+    final alts = <String>[
+      for (final n in confirmedNames) '@?${RegExp.escape(originalByLower[n]!)}',
+      for (final n in rosterNames) '@${RegExp.escape(originalByLower[n]!)}',
+    ];
+    final re = RegExp(alts.join('|'), unicode: true, caseSensitive: false);
+
+    final spans = <InlineSpan>[];
+    var last = 0;
+    for (final match in re.allMatches(text)) {
+      final start = match.start;
+      final end = match.end;
+      final raw = match.group(0)!;
+      final stripped = raw.startsWith('@') ? raw.substring(1) : raw;
+      final person = confirmed[stripped.toLowerCase()] ?? rosterOnly[stripped.toLowerCase()];
+      if (person == null) continue;
+
+      // Don't match inside a larger word (e.g. an email local-part).
+      final before = start > 0 ? text[start - 1] : '';
+      final after = end < text.length ? text[end] : '';
+      final bounded = (before.isEmpty || (!_word.hasMatch(before) && before != '@')) &&
+          (after.isEmpty || !_word.hasMatch(after));
+      if (!bounded) continue;
+
+      if (start > last) spans.add(TextSpan(text: text.substring(last, start)));
+      final rec = TapGestureRecognizer()..onTap = () => widget.onTapUser(person);
+      _recognizers.add(rec);
+      spans.add(TextSpan(text: stripped, style: widget.mentionStyle, recognizer: rec));
+      last = end;
+    }
+    if (last < text.length) spans.add(TextSpan(text: text.substring(last)));
+
+    return Text.rich(TextSpan(style: widget.baseStyle, children: spans));
   }
 }
 

@@ -34,11 +34,6 @@ class ExploreScreen extends StatelessWidget {
     ));
   }
 
-  void _soon(BuildContext context, String label) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$label is coming soon')));
-  }
-
   @override
   Widget build(BuildContext context) {
     final discover = <_Feature>[
@@ -117,15 +112,16 @@ class ExploreScreen extends StatelessWidget {
               _MenuGroup(
                 Icons.settings_rounded,
                 'Administration',
-                'People, categories and logs',
+                'People and categories',
                 ArdentColors.navy500,
                 children: [
                   _SubTile(Icons.manage_accounts_rounded, 'Manage users',
                       onTap: () => _push(context, const AdminUsersScreen())),
                   _SubTile(Icons.category_rounded, 'Marketplace categories',
                       onTap: () => _push(context, const CategoriesAdminScreen())),
-                  _SubTile(Icons.receipt_long_rounded, 'System log',
-                      onTap: () => _soon(context, 'System log')),
+                  // System log lives on the web admin only — there's no mobile
+                  // API for a global audit log, so it's intentionally omitted
+                  // here rather than shown as a dead-end "coming soon".
                 ],
               ),
             ],

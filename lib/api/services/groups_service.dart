@@ -26,6 +26,13 @@ class GroupsService {
       Map<String, dynamic>.from(
           await _api.post('/groups/direct', body: {'userId': userId}) as Map);
 
+  /// `GET /groups/unread` — unread totals across every conversation the caller
+  /// belongs to, in one call. Returns
+  /// `{ conversations: [{groupId, isDirect, count, lastMessageAt}], counts: {[groupId]: count}, total }`.
+  /// Call on load and on socket reconnect so the badge survives a refresh.
+  Future<Map<String, dynamic>> unread() async =>
+      Map<String, dynamic>.from(await _api.get('/groups/unread') as Map);
+
   /// `GET /groups/:id` — one group/thread (404 if not found).
   Future<Map<String, dynamic>> get(String id) async =>
       Map<String, dynamic>.from(await _api.get('/groups/$id') as Map);
@@ -199,4 +206,29 @@ class GroupsService {
       Map<String, dynamic>.from(await _api.post(
           '/groups/$id/messages/$messageId/react',
           body: {'emoji': emoji}) as Map);
+
+  /// `POST /groups/:id/read` — mark this conversation read up to now (call when
+  /// the user opens/focuses it). Returns `{ groupId, count: 0, lastReadAt }`;
+  /// broadcasts a `read` event over the socket so open "Seen" markers update.
+  Future<Map<String, dynamic>> markRead(String id) async =>
+      Map<String, dynamic>.from(await _api.post('/groups/$id/read') as Map);
+
+  /// `GET /groups/:id/receipts` — how far each other member has read (the "Seen"
+  /// markers). Returns `{ groupId, receipts: [{...author, lastReadAt}] }`.
+  Future<Map<String, dynamic>> receipts(String id) async =>
+      Map<String, dynamic>.from(await _api.get('/groups/$id/receipts') as Map);
+
+  /// `GET /groups/:id/posts?limit=&before=` — the group's own post feed
+  /// (separate from its chat). Pinned-first ordering only on the first page.
+  Future<List<dynamic>> posts(String id, {int? limit, String? before}) async {
+    final data = await _api
+        .get('/groups/$id/posts', query: {'limit': limit, 'before': before});
+    return data is List ? data : const [];
+  }
+
+  /// `POST /groups/:id/mute` — mute/unmute this group's **post** notifications,
+  /// for yourself only. Returns `{ groupId, muted }`.
+  Future<Map<String, dynamic>> mute(String id, {required bool muted}) async =>
+      Map<String, dynamic>.from(
+          await _api.post('/groups/$id/mute', body: {'muted': muted}) as Map);
 }

@@ -253,7 +253,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                 child: Row(
                   children: [
                     DsAvatar(
-                        initials: story.initials, color: story.color, size: 34),
+                        initials: story.initials, color: story.color, size: 34, imageUrl: story.avatarUrl),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(story.name,
@@ -425,7 +425,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> {
                                   leading: DsAvatar(
                                       initials: p.initials,
                                       color: p.color,
-                                      size: 40),
+                                      size: 40,
+                                      imageUrl: p.avatarUrl),
                                   title: Text(p.name,
                                       style: const TextStyle(
                                           fontWeight: FontWeight.w600)),

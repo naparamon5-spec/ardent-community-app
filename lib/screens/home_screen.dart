@@ -25,6 +25,53 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Post> _posts = [];
   List<Story> _stories = [];
 
+  final ScrollController _scroll = ScrollController();
+  static const int _pageSize = 20;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Loads the next page of older posts when the user nears the bottom.
+  void _onScroll() {
+    if (!_hasMore || _loadingMore || !_scroll.hasClients) return;
+    final pos = _scroll.position;
+    if (pos.pixels >= pos.maxScrollExtent - 500) _loadMore();
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final raw =
+          await Api.instance.posts.feed(limit: _pageSize, offset: _posts.length);
+      final fetched = raw.map(postFromJson).toList();
+      final existing = _posts.map((p) => p.id).toSet();
+      final fresh = fetched
+          .where((p) => p.id.isEmpty || !existing.contains(p.id))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _posts.addAll(fresh);
+        _hasMore = fetched.length >= _pageSize && fresh.isNotEmpty;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
+    }
+  }
+
   /// Keys of stories the user has already opened this session — their ring is
   /// drawn gray (viewed) instead of the coloured gradient, but stays in the row.
   final Set<String> _viewedStories = {};
@@ -50,11 +97,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadFeed() async {
     final results = await Future.wait([
-      Api.instance.posts.feed(limit: 30),
+      Api.instance.posts.feed(limit: _pageSize),
       Api.instance.stories.list().catchError((_) => <dynamic>[]),
     ]);
-    _posts = (results[0]).map(postFromJson).toList();
+    final posts = (results[0]).map(postFromJson).toList();
+    _posts = posts;
     _stories = (results[1]).map(storyFromJson).toList();
+    // Reset pagination for the fresh load (also runs on pull-to-refresh).
+    _hasMore = posts.length >= _pageSize;
+    _loadingMore = false;
   }
 
   /// Opens the composer, sends the draft to the backend, and prepends the
@@ -89,6 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return RefreshIndicator(
           onRefresh: reload,
           child: ListView(
+            controller: _scroll,
             padding: const EdgeInsets.all(ArdentSpacing.s4),
             children: [
               if (pinned != null) ...[
@@ -106,11 +158,31 @@ class _HomeScreenState extends State<HomeScreen> {
                       message: 'No posts yet. Be the first to share something.',
                       icon: Icons.dynamic_feed_rounded),
                 )
-              else
+              else ...[
                 for (final p in _posts) ...[
                   PostCard(post: p),
                   const SizedBox(height: ArdentSpacing.s4),
                 ],
+                if (_loadingMore)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: ArdentSpacing.s3),
+                    child: Center(
+                      child: SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                    ),
+                  )
+                else if (!_hasMore && _posts.length > _pageSize)
+                  const Padding(
+                    padding: EdgeInsets.only(top: ArdentSpacing.s2, bottom: ArdentSpacing.s6),
+                    child: Center(
+                      child: Text("You're all caught up",
+                          style: TextStyle(color: ArdentColors.fg3, fontSize: 13)),
+                    ),
+                  ),
+              ],
             ],
           ),
         );
@@ -318,7 +390,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.all(1.5),
                   decoration: const BoxDecoration(
                       color: Colors.white, shape: BoxShape.circle),
-                  child: DsAvatar(initials: s.initials, color: s.color, size: 30),
+                  child: DsAvatar(initials: s.initials, color: s.color, size: 30, imageUrl: s.avatarUrl),
                 ),
               ),
             ),
@@ -363,7 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             children: [
-              DsAvatar(initials: me.initials, color: me.color, size: 40),
+              DsAvatar(initials: me.initials, color: me.color, size: 40, imageUrl: me.avatarUrl),
               const SizedBox(width: ArdentSpacing.s3),
               Expanded(
                 child: InkWell(

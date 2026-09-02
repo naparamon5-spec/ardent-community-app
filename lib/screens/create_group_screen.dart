@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../api/api.dart';
 import '../theme/ardent_colors.dart';
@@ -20,6 +23,10 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _description = TextEditingController();
   bool _submitting = false;
 
+  /// Optional group photo, chosen from the gallery.
+  Uint8List? _photoBytes;
+  String _photoName = '';
+
   /// Optional accent colour, sent as a hex string. `null` = let the server use
   /// its default.
   int _colorIndex = 0;
@@ -40,6 +47,30 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     super.dispose();
   }
 
+  Future<void> _pickPhoto() async {
+    try {
+      final picked = await ImagePicker()
+          .pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      setState(() {
+        _photoBytes = bytes;
+        _photoName = picked.name;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Could not pick photo')));
+    }
+  }
+
+  static String _ext(String name, {required String fallback}) {
+    final i = name.lastIndexOf('.');
+    if (i < 0 || i == name.length - 1) return fallback;
+    return name.substring(i + 1).toLowerCase();
+  }
+
   Future<void> _submit() async {
     if (_submitting) return;
     if (!_formKey.currentState!.validate()) return;
@@ -47,11 +78,21 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     try {
-      await Api.instance.groups.create(fields: {
-        'name': _name.text.trim(),
-        if (_description.text.trim().isNotEmpty) 'description': _description.text.trim(),
-        'color': _colors[_colorIndex].hex,
-      });
+      await Api.instance.groups.create(
+        fields: {
+          'name': _name.text.trim(),
+          if (_description.text.trim().isNotEmpty)
+            'description': _description.text.trim(),
+          'color': _colors[_colorIndex].hex,
+        },
+        photo: _photoBytes == null
+            ? null
+            : (
+                bytes: _photoBytes!,
+                filename: _photoName.isEmpty ? 'group.jpg' : _photoName,
+                contentType: 'image/${_ext(_photoName, fallback: 'jpeg')}',
+              ),
+      );
       navigator.pop(true);
       messenger.showSnackBar(const SnackBar(content: Text('Group created')));
     } on ApiException catch (e) {
@@ -85,14 +126,53 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
           padding: const EdgeInsets.all(ArdentSpacing.s4),
           children: [
             Center(
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: _colors[_colorIndex].color,
-                  borderRadius: BorderRadius.circular(ArdentRadii.lg),
+              child: GestureDetector(
+                onTap: _pickPhoto,
+                child: Column(
+                  children: [
+                    Stack(
+                      children: [
+                        Container(
+                          width: 88,
+                          height: 88,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            color: _colors[_colorIndex].color,
+                            borderRadius: BorderRadius.circular(ArdentRadii.lg),
+                          ),
+                          child: _photoBytes != null
+                              ? Image.memory(_photoBytes!,
+                                  fit: BoxFit.cover,
+                                  width: 88,
+                                  height: 88)
+                              : const Icon(Icons.groups_rounded,
+                                  color: Colors.white, size: 40),
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color: ArdentColors.accent,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: ArdentColors.bgSurface, width: 2),
+                            ),
+                            child: const Icon(Icons.camera_alt_rounded,
+                                color: Colors.white, size: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: ArdentSpacing.s2),
+                    Text(_photoBytes == null ? 'Add photo' : 'Change photo',
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: ArdentColors.accent)),
+                  ],
                 ),
-                child: const Icon(Icons.groups_rounded, color: Colors.white, size: 34),
               ),
             ),
             const SizedBox(height: ArdentSpacing.s5),

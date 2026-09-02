@@ -97,7 +97,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
       child: SurfaceCard(
         child: Row(
           children: [
-            DsAvatar(initials: p.initials, color: p.color, size: 46, online: p.online),
+            DsAvatar(initials: p.initials, color: p.color, size: 46, online: p.online, imageUrl: p.avatarUrl),
             const SizedBox(width: ArdentSpacing.s3),
             Expanded(
               child: Column(

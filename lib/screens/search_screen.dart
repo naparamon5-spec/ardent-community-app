@@ -260,7 +260,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _personTile(Person p, TextTheme text) {
     return ListTile(
-      leading: DsAvatar(initials: p.initials, color: p.color, size: 42),
+      leading: DsAvatar(initials: p.initials, color: p.color, size: 42, imageUrl: p.avatarUrl),
       title: Text(p.name, style: text.titleMedium?.copyWith(fontSize: 15)),
       subtitle: Text(p.role),
       onTap: () => Navigator.of(context).push(
@@ -273,7 +273,7 @@ class _SearchScreenState extends State<SearchScreen> {
     final snippet = post.title.isNotEmpty ? post.title : post.text;
     return ListTile(
       leading: DsAvatar(
-          initials: post.author.initials, color: post.author.color, size: 42),
+          initials: post.author.initials, color: post.author.color, size: 42, imageUrl: post.author.avatarUrl),
       title: Text(post.author.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,

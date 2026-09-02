@@ -125,7 +125,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     DsAvatar(
                         initials: initialsFrom(l.seller),
                         color: l.color,
-                        size: 40),
+                        size: 40,
+                        imageUrl: l.sellerAvatarUrl),
                     const SizedBox(width: ArdentSpacing.s3),
                     Expanded(
                       child: Text(l.seller,
