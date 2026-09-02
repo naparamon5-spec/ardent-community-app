@@ -7,7 +7,7 @@ import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
 import 'create_group_screen.dart';
-import 'group_chat_screen.dart';
+import 'group_home_screen.dart';
 
 /// Groups directory — backed by `GET /groups`, with join via
 /// `PUT /groups/:id/join` and group creation via `POST /groups`.
@@ -20,6 +20,20 @@ class GroupsScreen extends StatefulWidget {
 
 class _GroupsScreenState extends State<GroupsScreen> {
   int _reloadTick = 0;
+  final _searchCtrl = TextEditingController();
+  String _search = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  bool _matches(Group g) {
+    if (_search.isEmpty) return true;
+    final q = _search.toLowerCase();
+    return g.name.toLowerCase().contains(q) || g.desc.toLowerCase().contains(q);
+  }
 
   Future<void> _openCreate() async {
     final created = await Navigator.of(context).push<bool>(
@@ -34,8 +48,10 @@ class _GroupsScreenState extends State<GroupsScreen> {
   }
 
   Future<void> _open(Group g) async {
+    // From the Explore → Groups directory, land on the group's home screen so
+    // the user can choose Posts or Chat. (The Chats tab still opens chat directly.)
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => GroupChatScreen(group: g)),
+      MaterialPageRoute(builder: (_) => GroupHomeScreen(group: g)),
     );
     // Membership may have changed (joined from inside), so refresh the list.
     if (mounted) setState(() => _reloadTick++);
@@ -51,23 +67,77 @@ class _GroupsScreenState extends State<GroupsScreen> {
         icon: const Icon(Icons.add_rounded),
         label: const Text('Create'),
       ),
-      body: AsyncView<List<Group>>(
-        key: ValueKey(_reloadTick),
-        loader: _load,
-        builder: (context, groups, reload) {
-          if (groups.isEmpty) {
-            return const EmptyState(message: 'No groups yet.', icon: Icons.groups_outlined);
-          }
-          return RefreshIndicator(
-            onRefresh: reload,
-            child: ListView.separated(
-              padding: const EdgeInsets.all(ArdentSpacing.s4),
-              itemCount: groups.length,
-              separatorBuilder: (_, _) => const SizedBox(height: ArdentSpacing.s4),
-              itemBuilder: (context, i) => _groupCard(groups[i], text),
+      body: Column(
+        children: [
+          _searchField(),
+          Expanded(
+            child: AsyncView<List<Group>>(
+              key: ValueKey(_reloadTick),
+              loader: _load,
+              builder: (context, groups, reload) {
+                if (groups.isEmpty) {
+                  return const EmptyState(
+                      message: 'No groups yet.', icon: Icons.groups_outlined);
+                }
+                final filtered = groups.where(_matches).toList();
+                if (filtered.isEmpty) {
+                  return const EmptyState(
+                      message: 'No groups match your search.',
+                      icon: Icons.search_off_rounded);
+                }
+                return RefreshIndicator(
+                  onRefresh: reload,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.all(ArdentSpacing.s4),
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: ArdentSpacing.s4),
+                    itemBuilder: (context, i) => _groupCard(filtered[i], text),
+                  ),
+                );
+              },
             ),
-          );
-        },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _searchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          ArdentSpacing.s4, ArdentSpacing.s3, ArdentSpacing.s4, ArdentSpacing.s2),
+      child: TextField(
+        controller: _searchCtrl,
+        onChanged: (v) => setState(() => _search = v.trim()),
+        decoration: InputDecoration(
+          hintText: 'Search groups',
+          filled: true,
+          fillColor: ArdentColors.bgSubtle,
+          prefixIcon: const Icon(Icons.search_rounded, color: ArdentColors.fg3),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(ArdentRadii.pill),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(ArdentRadii.pill),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(ArdentRadii.pill),
+            borderSide: const BorderSide(color: ArdentColors.accent),
+          ),
+          contentPadding: const EdgeInsets.symmetric(vertical: 0),
+          suffixIcon: _search.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: () => setState(() {
+                    _searchCtrl.clear();
+                    _search = '';
+                  }),
+                ),
+        ),
       ),
     );
   }
