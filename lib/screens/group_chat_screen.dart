@@ -844,7 +844,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     color: m.author.color)),
           ),
         if (m.replyTo != null) _replyPreview(m),
-        _bubbleWithBadge(m, radius),
+        // Keep the react affordance on the same row as the bubble body so it
+        // stays vertically centered against the message, not dropped down to
+        // the timestamp beneath it.
+        if (!m.mine && isLast)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(child: _bubbleWithBadge(m, radius)),
+              _reactButton(m),
+            ],
+          )
+        else
+          _bubbleWithBadge(m, radius),
         if (m.hasReactions) const SizedBox(height: 12),
         if (lastInGroup && m.time != null)
           Padding(
@@ -887,8 +900,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ),
             ),
           ),
-          // Incoming: react affordance sits to the right of the bubble.
-          if (!m.mine && isLast) _reactButton(m),
         ],
       ),
     );
