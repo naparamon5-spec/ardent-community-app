@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -229,30 +231,45 @@ class CallController extends ChangeNotifier {
     }
     if (cameraEnabled) await Permission.camera.request();
 
+    // 1) Fetch a LiveKit room token from the API.
+    String url;
+    String token;
     try {
       final res = await Api.instance.calls.token(callId);
-      final url = '${res['url'] ?? ''}';
-      final token = '${res['token'] ?? ''}';
-      if (url.isEmpty || token.isEmpty) {
-        throw StateError('Calling is not configured on the server.');
-      }
-      // Bail out if the call was cancelled while the token was in flight.
-      if (phase != CallPhase.active) return;
+      url = _adjustLiveKitUrl('${res['url'] ?? ''}'.trim());
+      token = '${res['token'] ?? ''}'.trim();
+      debugPrint('[Call] token ok: url=$url room=${res['room']} '
+          'tokenLen=${token.length}');
+    } catch (e, st) {
+      debugPrint('[Call] token fetch failed: $e\n$st');
+      _mediaFail(e is ApiException
+          ? e.message
+          : 'Couldn\'t reach the call server.');
+      return;
+    }
+    if (url.isEmpty || token.isEmpty) {
+      _mediaFail('Calling isn\'t configured on the server.');
+      return;
+    }
+    // Bail out if the call was cancelled while the token was in flight.
+    if (phase != CallPhase.active) return;
 
-      final r = Room(
-        roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
-      );
-      _roomEvents = r.createListener();
-      _roomEvents!
-        ..on<RoomDisconnectedEvent>((_) => _end())
-        ..on<ParticipantConnectedEvent>((_) => notifyListeners())
-        ..on<ParticipantDisconnectedEvent>((_) => notifyListeners())
-        ..on<TrackSubscribedEvent>((_) => notifyListeners())
-        ..on<TrackUnsubscribedEvent>((_) => notifyListeners())
-        ..on<TrackMutedEvent>((_) => notifyListeners())
-        ..on<TrackUnmutedEvent>((_) => notifyListeners());
-      r.addListener(_onRoomChange);
+    // 2) Connect to the LiveKit room and publish local media.
+    final r = Room(
+      roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
+    );
+    _roomEvents = r.createListener();
+    _roomEvents!
+      ..on<RoomDisconnectedEvent>((_) => _end())
+      ..on<ParticipantConnectedEvent>((_) => notifyListeners())
+      ..on<ParticipantDisconnectedEvent>((_) => notifyListeners())
+      ..on<TrackSubscribedEvent>((_) => notifyListeners())
+      ..on<TrackUnsubscribedEvent>((_) => notifyListeners())
+      ..on<TrackMutedEvent>((_) => notifyListeners())
+      ..on<TrackUnmutedEvent>((_) => notifyListeners());
+    r.addListener(_onRoomChange);
 
+    try {
       await r.connect(url, token);
       // The call may have ended while connecting — don't leave a live room.
       if (phase != CallPhase.active) {
@@ -271,13 +288,59 @@ class CallController extends ChangeNotifier {
       } catch (_) {}
       connectingMedia = false;
       notifyListeners();
-    } catch (e) {
-      mediaError = e is StateError
-          ? e.message
-          : 'Couldn\'t connect the call audio.';
-      connectingMedia = false;
-      notifyListeners();
+    } catch (e, st) {
+      debugPrint('[Call] LiveKit connect failed (url=$url): $e\n$st');
+      try {
+        await _roomEvents?.dispose();
+      } catch (_) {}
+      _roomEvents = null;
+      r.removeListener(_onRoomChange);
+      try {
+        await r.dispose();
+      } catch (_) {}
+      _mediaFail(_connectErrorText(e));
     }
+  }
+
+  void _mediaFail(String message) {
+    mediaError = message;
+    connectingMedia = false;
+    notifyListeners();
+  }
+
+  /// Normalizes the LiveKit URL for the device: LiveKit expects a WebSocket URL
+  /// (`ws://`/`wss://`), and the Android emulator can't reach the host machine's
+  /// `localhost` (10.0.2.2 is its alias). A correct production `wss://…` URL is
+  /// left as-is.
+  String _adjustLiveKitUrl(String url) {
+    var u = url.trim();
+    if (u.isEmpty) return u;
+    // LiveKit's client wants a ws(s) scheme, not http(s).
+    if (u.startsWith('https://')) {
+      u = 'wss://${u.substring(8)}';
+    } else if (u.startsWith('http://')) {
+      u = 'ws://${u.substring(7)}';
+    } else if (!u.contains('://')) {
+      u = 'wss://$u';
+    }
+    if (Platform.isAndroid) {
+      u = u
+          .replaceFirst('localhost', '10.0.2.2')
+          .replaceFirst('127.0.0.1', '10.0.2.2');
+    }
+    return u;
+  }
+
+  /// A short, human-readable reason for a LiveKit connection failure.
+  String _connectErrorText(Object e) {
+    final s = e.toString().toLowerCase();
+    if (s.contains('timeout') || s.contains('timed out')) {
+      return 'Call server timed out. Check your connection.';
+    }
+    if (s.contains('token') || s.contains('unauthorized') || s.contains('401')) {
+      return 'Call authorization failed.';
+    }
+    return 'Couldn\'t connect the call audio.';
   }
 
   void _onRoomChange() => notifyListeners();
