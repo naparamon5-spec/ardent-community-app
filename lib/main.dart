@@ -166,7 +166,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _index = 0;
 
   late final List<_Tab> _tabs = [
@@ -186,9 +186,27 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AppSession.instance.refreshUnreadNotifications();
     // Start listening for incoming calls for the whole authenticated session.
     CallController.instance.init(rootNavigatorKey);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-sync the unread badge whenever the app returns to the foreground, so
+    // it matches the notifications list — reads on another device or
+    // notifications received while backgrounded are reflected without a
+    // relaunch.
+    if (state == AppLifecycleState.resumed) {
+      AppSession.instance.refreshUnreadNotifications();
+    }
   }
 
   void _goTab(int i) => setState(() {

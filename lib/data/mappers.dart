@@ -284,8 +284,20 @@ MediaItem? _mediaItem(dynamic value) {
   final m = asMap(value);
   final rawUrl = _str(_pick(m, ['url', 'src', 'path', 'href', 'link', 'downloadUrl', 'fileUrl']));
   if (rawUrl.isEmpty) return null;
-  final type = _mediaType(rawUrl,
-      _pick(m, ['type', 'mimeType', 'mime', 'contentType', 'fileType', 'kind', 'format']));
+  // Prefer explicit boolean flags the backend sets on an attachment
+  // (`isVideo`/`isImage`) — media object keys often have no file extension, so
+  // guessing from the URL alone would misclassify a video/image as a plain
+  // file. Fall back to the type/mime string, then the URL extension.
+  final type = m['isVideo'] == true
+      ? 'video'
+      : m['isImage'] == true
+          ? 'image'
+          : _mediaType(
+              rawUrl,
+              _pick(m, [
+                'type', 'mimeType', 'mime', 'contentType', 'fileType', 'kind',
+                'format'
+              ]));
   final name = _str(_pick(m, ['fileName', 'filename', 'name', 'originalName']));
   final vc = _pick(m, ['viewCount', 'views', 'seenCount']);
   final reaction = _pick(m, ['myReaction', 'reaction']);

@@ -9,10 +9,16 @@ class UsersService {
   UsersService(this._api);
   final ApiClient _api;
 
-  /// `GET /users?search=` — directory listing (matches name/role/department).
-  /// Optional auth (personalises viewer flags when a token is sent).
-  Future<List<dynamic>> list({String? search}) async {
-    final data = await _api.get('/users', query: {'search': search});
+  /// `GET /users?search=&interest=` — directory listing (matches
+  /// name/role/department). Pass [interest] (a tag's *slug*) to narrow the
+  /// directory to people who listed that tag — an unknown slug yields `[]`, not
+  /// everyone. Each user includes their `interests[]`. Optional auth
+  /// (personalises viewer flags when a token is sent).
+  Future<List<dynamic>> list({String? search, String? interest}) async {
+    final data = await _api.get('/users', query: {
+      'search': search,
+      'interest': interest,
+    });
     return data is List ? data : const [];
   }
 
@@ -38,6 +44,21 @@ class UsersService {
   /// showEmail, emailNotifs, pushNotifs, notifyComments, notifyKudos).
   Future<Map<String, dynamic>> updateMe(Map<String, dynamic> fields) async =>
       Map<String, dynamic>.from(await _api.patch('/users/me', body: fields) as Map);
+
+  /// `PUT /users/me/interests` — replace the current user's whole interest /
+  /// hobby / like list wholesale. [interests] is the full list, each entry
+  /// `{ name, kind? }` where `kind` is `interest` (default) | `hobby` | `like`.
+  /// Unusable entries (blank, an emoji alone) are silently dropped; a list over
+  /// 30 tags is rejected (400). Returns the saved list `[{id, name, slug, kind}]`.
+  Future<List<dynamic>> setInterests(List<Map<String, dynamic>> interests) async {
+    final data = await _api.put('/users/me/interests', body: {'interests': interests});
+    return data is List ? data : const [];
+  }
+
+  /// `GET /users/me/interests/counts` — `{ [slug]: count }`: how many *other*
+  /// colleagues share each of your own tags (the "· 4" hint on your profile).
+  Future<Map<String, dynamic>> myInterestCounts() async =>
+      Map<String, dynamic>.from(await _api.get('/users/me/interests/counts') as Map);
 
   /// `GET /users/me/hr` — own HR-linked details
   /// (`{ employeeId, dateHired, birthMonth, birthDay, linked }`). Never a birth

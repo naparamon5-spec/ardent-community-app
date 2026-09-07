@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -32,6 +33,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _activityFilter = 0; // 0 All, 1 Posts, 2 Groups, 3 Events
   bool _uploadingAvatar = false;
   bool _uploadingCover = false;
+
+  // ---- Interests / Hobbies / Likes edit state ----
+  // The signed-in user's full tag list as `{name, kind}` (kind =
+  // interest|hobby|like). Seeded from the loaded profile the first time the
+  // About tab builds, then owned locally so edits show instantly; a save
+  // replaces it with the server's canonical list. `PUT /users/me/interests`
+  // replaces the whole list at once, so every edit sends all three kinds.
+  List<Map<String, dynamic>>? _tags;
+  bool _savingTags = false;
 
   // ---- Add-certificate form state ----
   bool _addingCert = false;
@@ -95,6 +105,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final next = _load();
     setState(() {
       _future = next;
+      _tags = null; // reseed from the freshly-loaded profile
     });
     await next.catchError((_) => _ProfileData(
         posts: const [],
@@ -1034,9 +1045,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (birthday.isNotEmpty) _infoRow(Icons.cake_outlined, 'Birthday', birthday),
     ];
 
-    final interests = _profileList(profile, ['interests']);
-    final hobbies = _profileList(profile, ['hobbies']);
-    final likes = _profileList(profile, ['likes', 'favorites']);
+    // Seed the editable tag list from the profile once, then own it locally.
+    _tags ??= _parseTags(profile);
+    List<String> ofKind(String kind) => _tags!
+        .where((t) => t['kind'] == kind)
+        .map((t) => (t['name'] ?? '').toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final interests = ofKind('interest');
+    final hobbies = ofKind('hobby');
+    final likes = ofKind('like');
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
@@ -1065,11 +1083,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: ArdentSpacing.s4),
-          _tagSection(Icons.lightbulb_outline_rounded, 'Interests', interests),
+          _tagSection(
+              Icons.lightbulb_outline_rounded, 'Interests', interests, 'interest'),
           const SizedBox(height: ArdentSpacing.s4),
-          _tagSection(Icons.emoji_events_outlined, 'Hobbies', hobbies),
+          _tagSection(Icons.emoji_events_outlined, 'Hobbies', hobbies, 'hobby'),
           const SizedBox(height: ArdentSpacing.s4),
-          _tagSection(Icons.favorite_outline_rounded, 'Likes', likes),
+          _tagSection(Icons.favorite_outline_rounded, 'Likes', likes, 'like'),
         ],
       ),
     );
@@ -1100,8 +1119,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  /// An Interests / Hobbies / Likes card with pill tags (or an empty note).
-  Widget _tagSection(IconData icon, String title, List<String> tags) {
+  /// An editable Interests / Hobbies / Likes card: pill tags (each removable)
+  /// plus an "Add" action that appends a tag of this [kind].
+  Widget _tagSection(
+      IconData icon, String title, List<String> tags, String kind) {
     return SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1111,6 +1132,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Icon(icon, size: 15, color: ArdentColors.fg3),
               const SizedBox(width: ArdentSpacing.s2),
               Overline(title),
+              const Spacer(),
+              _addTagButton(kind),
             ],
           ),
           const SizedBox(height: ArdentSpacing.s3),
@@ -1125,17 +1148,165 @@ class _ProfileScreenState extends State<ProfileScreen> {
               spacing: ArdentSpacing.s2,
               runSpacing: ArdentSpacing.s2,
               children: [
-                for (final t in tags)
-                  DsChip(
-                    label: t,
-                    fg: ArdentColors.fg2,
-                    bg: ArdentColors.bgSubtle,
-                  ),
+                for (final t in tags) _editableTagChip(t, kind),
               ],
             ),
         ],
       ),
     );
+  }
+
+  /// Small "Add" affordance in a tag section's header.
+  Widget _addTagButton(String kind) {
+    return InkWell(
+      onTap: _savingTags ? null : () => _addTag(kind),
+      borderRadius: BorderRadius.circular(ArdentRadii.pill),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add_rounded, size: 16, color: ArdentColors.accent),
+            SizedBox(width: 3),
+            Text('Add',
+                style: TextStyle(
+                    color: ArdentColors.accent,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A tag pill with a trailing "×" that removes it.
+  Widget _editableTagChip(String name, String kind) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 4, 6, 4),
+      decoration: BoxDecoration(
+        color: ArdentColors.bgSubtle,
+        borderRadius: BorderRadius.circular(ArdentRadii.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(name,
+              style: const TextStyle(
+                  color: ArdentColors.fg2,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4)),
+          const SizedBox(width: 4),
+          InkWell(
+            onTap: _savingTags ? null : () => _removeTag(name, kind),
+            customBorder: const CircleBorder(),
+            child: const Icon(Icons.close_rounded, size: 14, color: ArdentColors.fg3),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Parses the profile JSON into a `{name, kind}` list. Prefers the documented
+  /// single `interests[]` (each carrying its own `kind`); falls back to legacy
+  /// split `interests`/`hobbies`/`likes` arrays.
+  List<Map<String, dynamic>> _parseTags(Map<String, dynamic> profile) {
+    final combined = profile['interests'];
+    final hasKinds =
+        combined is List && combined.any((e) => e is Map && e['kind'] != null);
+    final out = <Map<String, dynamic>>[];
+    if (hasKinds) {
+      for (final e in combined) {
+        if (e is! Map) continue;
+        final name = (e['name'] ?? e['label'] ?? '').toString().trim();
+        if (name.isEmpty) continue;
+        out.add({'name': name, 'kind': (e['kind'] ?? 'interest').toString()});
+      }
+      return out;
+    }
+    void addKind(List<String> keys, String kind) {
+      for (final n in _profileList(profile, keys)) {
+        out.add({'name': n, 'kind': kind});
+      }
+    }
+
+    addKind(['interests'], 'interest');
+    addKind(['hobbies'], 'hobby');
+    addKind(['likes', 'favorites'], 'like');
+    return out;
+  }
+
+  Future<void> _addTag(String kind) async {
+    final current = _tags ?? const <Map<String, dynamic>>[];
+    // Names already on this kind — so the picker can mark them as added.
+    final taken = {
+      for (final t in current)
+        if (t['kind'] == kind) (t['name'] ?? '').toString().toLowerCase(),
+    };
+    final name = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _InterestPickerSheet(kind: kind, taken: taken),
+    );
+    if (name == null || name.isEmpty || !mounted) return;
+    final dup = current.any((t) =>
+        t['kind'] == kind &&
+        (t['name'] ?? '').toString().toLowerCase() == name.toLowerCase());
+    if (dup) return;
+    if (current.length >= 30) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You can list up to 30 tags.')));
+      return;
+    }
+    await _saveTags([
+      ...current,
+      {'name': name, 'kind': kind},
+    ]);
+  }
+
+  Future<void> _removeTag(String name, String kind) async {
+    final current = _tags ?? const <Map<String, dynamic>>[];
+    final next = current
+        .where((t) =>
+            !(t['kind'] == kind && (t['name'] ?? '').toString() == name))
+        .toList();
+    await _saveTags(next);
+  }
+
+  /// Persists the whole tag list via `PUT /users/me/interests` (optimistic:
+  /// updates the UI first, reverts on failure).
+  Future<void> _saveTags(List<Map<String, dynamic>> next) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final prev = _tags;
+    setState(() {
+      _tags = next;
+      _savingTags = true;
+    });
+    try {
+      final saved = await Api.instance.users.setInterests(
+        [for (final t in next) {'name': t['name'], 'kind': t['kind']}],
+      );
+      if (!mounted) return;
+      setState(() {
+        _tags = [
+          for (final e in saved)
+            if ((asMap(e)['name'] ?? '').toString().trim().isNotEmpty)
+              {
+                'name': asMap(e)['name'].toString(),
+                'kind': (asMap(e)['kind'] ?? 'interest').toString(),
+              },
+        ];
+        _savingTags = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _tags = prev;
+        _savingTags = false;
+      });
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   // ---- About field helpers --------------------------------------------------
@@ -1220,5 +1391,185 @@ class _ProfileData {
       if (n != null) return n;
     }
     return 0;
+  }
+}
+
+/// Bottom-sheet picker that searches the shared Interests pool
+/// (`GET /interests?q=`) so the user picks an existing tag — or types a new one
+/// (the pool grows implicitly). Pops the chosen name, or null on cancel.
+class _InterestPickerSheet extends StatefulWidget {
+  const _InterestPickerSheet({required this.kind, required this.taken});
+
+  final String kind;
+
+  /// Lowercased names already on this kind — shown as "added" and not tappable.
+  final Set<String> taken;
+
+  @override
+  State<_InterestPickerSheet> createState() => _InterestPickerSheetState();
+}
+
+class _InterestPickerSheetState extends State<_InterestPickerSheet> {
+  final _ctrl = TextEditingController();
+  Timer? _debounce;
+  List<dynamic> _results = const [];
+  bool _loading = true;
+  String _query = '';
+
+  String get _label => switch (widget.kind) {
+        'hobby' => 'Hobby',
+        'like' => 'Like',
+        _ => 'Interest',
+      };
+
+  @override
+  void initState() {
+    super.initState();
+    _search(''); // popular tags first (commonest-first when q is empty)
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    _query = v.trim();
+    _debounce?.cancel();
+    _debounce =
+        Timer(const Duration(milliseconds: 250), () => _search(_query));
+  }
+
+  Future<void> _search(String q) async {
+    setState(() => _loading = true);
+    try {
+      final rows = await Api.instance.interests
+          .search(q: q.isEmpty ? null : q, limit: 20);
+      if (!mounted) return;
+      setState(() {
+        _results = rows;
+        _loading = false;
+      });
+    } on ApiException {
+      if (!mounted) return;
+      setState(() {
+        _results = const [];
+        _loading = false;
+      });
+    }
+  }
+
+  bool get _exactExists => _results.any((e) =>
+      (asMap(e)['name'] ?? '').toString().toLowerCase() ==
+      _query.toLowerCase());
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.75),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(ArdentSpacing.s4, 0,
+                    ArdentSpacing.s4, ArdentSpacing.s2),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Add $_label',
+                      style: text.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
+                child: TextField(
+                  controller: _ctrl,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.done,
+                  onChanged: _onChanged,
+                  onSubmitted: (v) {
+                    final n = v.trim();
+                    if (n.isNotEmpty) Navigator.of(context).pop(n);
+                  },
+                  decoration: const InputDecoration(
+                    hintText: 'Search or type to add',
+                    prefixIcon: Icon(Icons.search_rounded),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(height: ArdentSpacing.s2),
+              Flexible(child: _body(text)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _body(TextTheme text) {
+    final rows = <Widget>[];
+    // Offer to create the typed tag when it isn't already an exact pool match.
+    if (_query.isNotEmpty && !_exactExists) {
+      final already = widget.taken.contains(_query.toLowerCase());
+      rows.add(ListTile(
+        leading: const Icon(Icons.add_circle_outline_rounded,
+            color: ArdentColors.accent),
+        title: Text('Add "$_query"'),
+        subtitle: Text(already ? 'Already in your list' : 'New tag'),
+        enabled: !already,
+        onTap: already ? null : () => Navigator.of(context).pop(_query),
+      ));
+    }
+    for (final e in _results) {
+      final m = asMap(e);
+      final name = (m['name'] ?? '').toString();
+      if (name.isEmpty) continue;
+      final count = m['usageCount'] ?? m['count'];
+      final n =
+          count is num ? count.toInt() : int.tryParse('${count ?? ''}') ?? 0;
+      final already = widget.taken.contains(name.toLowerCase());
+      rows.add(ListTile(
+        leading: const Icon(Icons.local_offer_outlined,
+            color: ArdentColors.navy600),
+        title: Text(name),
+        subtitle: n > 0 ? Text('$n ${n == 1 ? 'person' : 'people'}') : null,
+        trailing: already
+            ? const Icon(Icons.check_rounded, color: ArdentColors.accent)
+            : null,
+        enabled: !already,
+        onTap: already ? null : () => Navigator.of(context).pop(name),
+      ));
+    }
+    if (_loading && rows.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(ArdentSpacing.s5),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (rows.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(ArdentSpacing.s5),
+        child: Center(
+          child: Text(
+            _query.isEmpty
+                ? 'No interests yet — type to add one.'
+                : 'No matches. Type to add a new one.',
+            style: const TextStyle(color: ArdentColors.fg3),
+          ),
+        ),
+      );
+    }
+    return ListView(padding: EdgeInsets.zero, shrinkWrap: true, children: rows);
   }
 }

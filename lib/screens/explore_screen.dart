@@ -9,6 +9,7 @@ import 'booking_admin_screen.dart';
 import 'bookings_screen.dart';
 import 'categories_admin_screen.dart';
 import 'ethics_admin_screen.dart';
+import 'interests_admin_screen.dart';
 import 'ethics_screen.dart';
 import 'events_screen.dart';
 import 'groups_screen.dart';
@@ -119,6 +120,8 @@ class ExploreScreen extends StatelessWidget {
                       onTap: () => _push(context, const AdminUsersScreen())),
                   _SubTile(Icons.category_rounded, 'Marketplace categories',
                       onTap: () => _push(context, const CategoriesAdminScreen())),
+                  _SubTile(Icons.local_offer_rounded, 'Profile interests',
+                      onTap: () => _push(context, const InterestsAdminScreen())),
                   // System log lives on the web admin only — there's no mobile
                   // API for a global audit log, so it's intentionally omitted
                   // here rather than shown as a dead-end "coming soon".

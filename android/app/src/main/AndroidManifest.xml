@@ -16,6 +16,7 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="true">
         <!-- usesCleartextTraffic allows the default http://…:4000 dev backend.
              Remove it (or scope it via a network-security-config) once the app

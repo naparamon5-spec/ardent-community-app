@@ -1139,6 +1139,48 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ),
       );
     }
+    if (item.isVideo) {
+      return GestureDetector(
+        onTap: () => _openUrl(item.url),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: Container(
+            width: 220,
+            height: 150,
+            color: const Color(0xFF10151F),
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: const BoxDecoration(
+                    color: Color(0xCCFFFFFF),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.play_arrow_rounded,
+                      size: 34, color: ArdentColors.navy900),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.videocam_rounded, size: 14, color: Colors.white70),
+                    SizedBox(width: 4),
+                    Text('Video',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     // File / document card.
     final name = item.fileName?.isNotEmpty == true
         ? item.fileName!
