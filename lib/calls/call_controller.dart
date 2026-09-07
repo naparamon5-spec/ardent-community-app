@@ -236,6 +236,18 @@ class CallController extends ChangeNotifier {
       return;
     }
 
+    // iOS Simulator can't capture the screen: Apple's ReplayKit / WebRTC
+    // screen capture is unsupported there, so the broadcast picker never
+    // produces frames. Fail fast with a clear message instead of silently
+    // throwing so the user isn't left wondering why nothing happened.
+    if (Platform.isIOS && Platform.environment.containsKey('SIMULATOR_UDID')) {
+      debugPrint('[Call] screen share: skipped — iOS Simulator unsupported');
+      mediaError =
+          'Screen sharing isn\'t available on the iOS Simulator. Try it on a physical iPhone or iPad.';
+      notifyListeners();
+      return;
+    }
+
     try {
       if (Platform.isAndroid) {
         // Android: ask for screen-capture consent, then bring up the
