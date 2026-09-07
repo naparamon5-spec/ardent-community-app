@@ -5,6 +5,7 @@ import '../api/session.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import 'ds.dart';
+import 'mention_text.dart';
 
 /// Feed post card — a faithful port of the web `feed/PostCard.vue`, covering
 /// the announcement, kudos, poll, and text variants, plus the like / comment /
@@ -516,7 +517,8 @@ class _PostCardState extends State<PostCard> {
       case PostKind.text:
       case PostKind.photo:
       case PostKind.file:
-        return Text(post.text, style: text.bodyLarge);
+        return MentionText(
+            text: post.text, baseStyle: text.bodyLarge ?? const TextStyle());
     }
   }
 
@@ -526,7 +528,8 @@ class _PostCardState extends State<PostCard> {
       children: [
         Text(post.title, style: text.titleLarge),
         const SizedBox(height: ArdentSpacing.s2),
-        Text(post.text, style: text.bodyLarge),
+        MentionText(
+            text: post.text, baseStyle: text.bodyLarge ?? const TextStyle()),
         if (post.details.isNotEmpty) ...[
           const SizedBox(height: ArdentSpacing.s3),
           Container(
@@ -1414,8 +1417,11 @@ class _CommentTileState extends State<_CommentTile> {
                               fontWeight: FontWeight.w700,
                               color: ArdentColors.fg1)),
                       const SizedBox(height: 2),
-                      Text(c.text,
-                          style: const TextStyle(fontSize: 13, color: ArdentColors.fg2)),
+                      MentionText(
+                        text: c.text,
+                        baseStyle: const TextStyle(
+                            fontSize: 13, color: ArdentColors.fg2),
+                      ),
                     ],
                   ),
                 ),

@@ -11,6 +11,7 @@ import '../api/session.dart';
 import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
+import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
 import 'user_profile_screen.dart';
 
@@ -118,6 +119,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// to render the name bold and to open their profile when tapped (the message
   /// text/payload may carry only a mention user id).
   List<Person> _members = const [];
+
+  /// Mentioned users resolved on demand by id, for when a message carries a
+  /// bare mention id that the member roster doesn't cover (e.g. the roster
+  /// arrived without populated names). Keyed by user id.
+  final Map<String, Person> _resolvedMentions = {};
+
+  /// Mention ids currently being fetched, so we don't request the same id twice.
+  final Set<String> _fetchingMentions = {};
 
   /// Group-chat socket events aren't pinned down in the API doc (only presence
   /// and calls are), so we listen on the common candidate names. An unmatched
@@ -540,10 +549,35 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             icon: const Icon(Icons.call_rounded),
             onPressed: _startCall,
           ),
-          IconButton(
-            tooltip: 'Shared content',
+          PopupMenuButton<String>(
+            tooltip: 'More',
             icon: const Icon(Icons.more_vert_rounded),
-            onPressed: _openSharedContent,
+            onSelected: (value) {
+              if (value == 'members') {
+                _openMembers();
+              } else if (value == 'shared') {
+                _openSharedContent();
+              }
+            },
+            itemBuilder: (context) => [
+              if (!g.isDirect)
+                const PopupMenuItem(
+                  value: 'members',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.group_rounded),
+                    title: Text('Members'),
+                  ),
+                ),
+              const PopupMenuItem(
+                value: 'shared',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.folder_shared_rounded),
+                  title: Text('Shared content'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -979,6 +1013,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     for (final p in _members) {
       if (men.id != null && p.id == men.id) return p;
     }
+    if (men.id != null) {
+      final cached = _resolvedMentions[men.id];
+      if (cached != null) return cached;
+    }
     if (men.name != null) {
       final lower = men.name!.toLowerCase();
       for (final p in _members) {
@@ -992,7 +1030,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         color: avatarColorFor(men.id ?? men.name!),
       );
     }
+    // Bare id we couldn't resolve yet — fetch the user so the next build can
+    // bold and link the mention.
+    if (men.id != null) _ensureMentionResolved(men.id!);
     return null;
+  }
+
+  /// Fetches a mentioned user by id (once) and caches them, so a message that
+  /// carries only a mention id still renders the name bold once resolved.
+  void _ensureMentionResolved(String id) {
+    if (id.isEmpty ||
+        _resolvedMentions.containsKey(id) ||
+        _fetchingMentions.contains(id) ||
+        _members.any((p) => p.id == id)) {
+      return;
+    }
+    _fetchingMentions.add(id);
+    Api.instance.users.get(id).then((raw) {
+      if (!mounted) return;
+      final p = personFromJson(raw);
+      if (p.name.trim().isNotEmpty && p.name != 'Unknown') {
+        setState(() => _resolvedMentions[id] = p);
+      }
+    }).catchError((_) {
+      // Non-fatal: the mention just stays plain text.
+    });
   }
 
   /// Opens a member's profile from a tapped @mention.
@@ -1532,6 +1594,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  void _openMembers() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _GroupMembersScreen(group: widget.group),
+      ),
+    );
+  }
+
   void _showAttachSheet() {
     // Anchor a floating popup just above the plus icon.
     final box = _attachKey.currentContext?.findRenderObject() as RenderBox?;
@@ -1925,6 +1995,104 @@ class _SharedFile {
 /// Scans the loaded [messages] and surfaces every image attachment, file/video
 /// attachment, and link (URLs found in message text) — newest first — the way a
 /// web chat's shared-media panel does.
+/// The group's members, loaded fresh from `GET /groups/:id/members`. Each row
+/// taps through to that person's profile, mirroring the web's Members panel.
+class _GroupMembersScreen extends StatelessWidget {
+  const _GroupMembersScreen({required this.group});
+  final Group group;
+
+  Future<List<({Person person, bool admin})>> _load() async {
+    final raw = await Api.instance.groups.members(group.id);
+    return raw
+        .map((e) {
+          final map = asMap(e);
+          // Members may arrive as bare users or as membership wrappers.
+          final person = personFromJson(map['user'] ?? map['member'] ?? e);
+          final rawAdmin = map['isGroupAdmin'] ?? map['isAdmin'];
+          final admin = rawAdmin == true || rawAdmin == 'true' || rawAdmin == 1;
+          return (person: person, admin: admin);
+        })
+        .where((m) => m.person.name.trim().isNotEmpty && m.person.name != 'Unknown')
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Members')),
+      body: AsyncView<List<({Person person, bool admin})>>(
+        loader: _load,
+        builder: (context, members, reload) {
+          if (members.isEmpty) {
+            return const _CenteredMessage(
+                icon: Icons.group_outlined, message: 'No members to show.');
+          }
+          return RefreshIndicator(
+            onRefresh: reload,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: ArdentSpacing.s2),
+              itemCount: members.length,
+              separatorBuilder: (_, _) =>
+                  const Divider(height: 1, indent: 72, color: ArdentColors.border),
+              itemBuilder: (context, i) {
+                final m = members[i];
+                final p = m.person;
+                return ListTile(
+                  leading: DsAvatar(
+                      initials: p.initials,
+                      color: p.color,
+                      size: 46,
+                      imageUrl: p.avatarUrl),
+                  title: Text(p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, color: ArdentColors.fg1)),
+                  subtitle: p.role.trim().isEmpty
+                      ? null
+                      : Text(p.role,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: ArdentColors.fg3)),
+                  trailing: m.admin
+                      ? const _AdminBadge()
+                      : const Icon(Icons.chevron_right_rounded,
+                          color: ArdentColors.fg3),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => UserProfileScreen(person: p)),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Small "Admin" pill shown beside group admins in the members list.
+class _AdminBadge extends StatelessWidget {
+  const _AdminBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: ArdentColors.accentSoft,
+        borderRadius: BorderRadius.circular(ArdentRadii.sm),
+      ),
+      child: const Text('Admin',
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: ArdentColors.accent)),
+    );
+  }
+}
+
 class _SharedContentScreen extends StatelessWidget {
   const _SharedContentScreen({required this.group, required this.messages});
   final Group group;
@@ -2221,6 +2389,8 @@ class _MentionTextState extends State<_MentionText> {
       if (start > last) spans.add(TextSpan(text: text.substring(last, start)));
       final rec = TapGestureRecognizer()..onTap = () => widget.onTapUser(person);
       _recognizers.add(rec);
+      // Render the name without the leading '@', bold — matching the web client,
+      // which shows "Ramon Napa Tosbas" (bold) rather than "@Ramon Napa Tosbas".
       spans.add(TextSpan(text: stripped, style: widget.mentionStyle, recognizer: rec));
       last = end;
     }

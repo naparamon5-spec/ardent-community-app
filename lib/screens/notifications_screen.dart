@@ -6,6 +6,8 @@ import '../data/mappers.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
+import 'group_chat_screen.dart';
+import 'post_detail_screen.dart';
 
 /// Notifications — backed by `GET /notifications`, with `read-all` and
 /// per-item `:id/read`.
@@ -58,6 +60,41 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       if (mounted) setState(() => _reloadTick++);
     } on ApiException {
       // Non-critical; ignore.
+    }
+  }
+
+  /// Marks the notification read and opens whatever it points at, routing on
+  /// the backend's `entityType`/`entityId` pair — the same mapping the web
+  /// client uses. Notifications with no navigable target just mark read.
+  Future<void> _open(NotificationItem n) async {
+    _markOne(n);
+    switch (n.entityType) {
+      case 'post':
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PostDetailScreen(postId: n.entityId),
+        ));
+      case 'group':
+        await _openGroupChat(n.entityId);
+      default:
+        // Other entity types (event, ethics, booking, call, follow, …) have no
+        // dedicated push target here yet — the row is simply marked read.
+        break;
+    }
+  }
+
+  /// Resolves a group by id and opens its chat. The notification only carries
+  /// the group id, so fetch the full record first.
+  Future<void> _openGroupChat(String groupId) async {
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final raw = await Api.instance.groups.get(groupId);
+      if (!mounted) return;
+      navigator.push(MaterialPageRoute(
+        builder: (_) => GroupChatScreen(group: groupFromJson(raw)),
+      ));
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -145,7 +182,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     color: ArdentColors.accent, shape: BoxShape.circle),
               )
             : null,
-        onTap: () => _markOne(n),
+        onTap: () => _open(n),
       ),
     );
   }

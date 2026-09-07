@@ -92,9 +92,19 @@ class GroupsService {
   Future<void> cancelJoinRequest(String id) => _api.delete('/groups/$id/request');
 
   /// `GET /groups/:id/members` — list members (active membership or site admin).
+  /// The payload is usually a bare list, but tolerate a wrapped object
+  /// (`{members|users|items|data: [...]}`) so the caller never ends up with an
+  /// empty roster (which would, e.g., stop @mentions from rendering bold).
   Future<List<dynamic>> members(String id) async {
     final data = await _api.get('/groups/$id/members');
-    return data is List ? data : const [];
+    if (data is List) return data;
+    if (data is Map) {
+      for (final key in ['members', 'users', 'items', 'data']) {
+        final v = data[key];
+        if (v is List) return v;
+      }
+    }
+    return const [];
   }
 
   /// `POST /groups/:id/members` — admin adds a member directly.

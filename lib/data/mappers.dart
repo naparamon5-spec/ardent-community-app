@@ -667,6 +667,9 @@ class NotificationItem {
     required this.unread,
     required this.icon,
     required this.color,
+    this.type = '',
+    this.entityType = '',
+    this.entityId = '',
   });
 
   final String id;
@@ -676,6 +679,32 @@ class NotificationItem {
   final bool unread;
   final IconData icon;
   final Color color;
+
+  /// The notification kind (`comment`, `reaction`, `mention`, `follow`, …),
+  /// lower-cased, used to pick the row icon.
+  final String type;
+
+  /// The thing this notification points at — mirrors the backend's
+  /// `entityType`/`entityId` pair that the web client routes on (`post`,
+  /// `group`, `event`, `ethics`, `booking`, `call`, …). Empty when the payload
+  /// carries no target, in which case a tap just marks the row read.
+  final String entityType;
+  final String entityId;
+
+  /// Whether tapping this notification can navigate anywhere. Mirrors the web
+  /// client: only entity types it knows how to open resolve to a destination.
+  bool get hasTarget =>
+      entityId.isNotEmpty &&
+      const {'post', 'group', 'event', 'ethics', 'booking', 'call'}
+          .contains(entityType);
+}
+
+/// Extracts a plain id string from a value that is either a bare id or an
+/// object carrying `id`/`_id`/`slug`.
+String _idFrom(dynamic v) {
+  if (v == null) return '';
+  if (v is Map) return _str(_pick(v, ['id', '_id', 'slug']));
+  return '$v';
 }
 
 ({IconData icon, Color color}) _notificationStyle(String type) {
@@ -702,10 +731,35 @@ class NotificationItem {
 
 NotificationItem notificationFromJson(dynamic value) {
   final json = asMap(value);
-  final style = _notificationStyle(_str(_pick(json, ['type', 'kind'])));
+  final type = _str(_pick(json, ['type', 'kind'])).toLowerCase();
+  final style = _notificationStyle(type);
   final read = _pick(json, ['read', 'isRead']) != null
       ? _bool(_pick(json, ['read', 'isRead']))
       : !_bool(_pick(json, ['unread']), true);
+
+  // The backend tags each notification with an `entityType`/`entityId` pair
+  // (e.g. post/<id>, group/<id>) — the same fields the web client routes on.
+  // Tolerate a nested payload wrapper and an `entity` object just in case.
+  final containers = <Map>[
+    json,
+    for (final k in ['data', 'meta', 'payload', 'entity', 'target'])
+      if (json[k] is Map) json[k] as Map,
+  ];
+  String pick(List<String> keys) {
+    for (final m in containers) {
+      final v = _str(_pick(m, keys));
+      if (v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  final entityType = pick(['entityType', 'entity_type', 'targetType']).toLowerCase();
+  var entityId = pick(['entityId', 'entity_id', 'targetId']);
+  // Fall back to an `entity` object's own id when only the object was sent.
+  if (entityId.isEmpty && json['entity'] is Map) {
+    entityId = _idFrom(json['entity']);
+  }
+
   return NotificationItem(
     id: _str(_pick(json, ['id', '_id'])),
     actor: personFromJson(_pick(json, ['actor', 'fromUser', 'sender', 'user'])),
@@ -714,5 +768,8 @@ NotificationItem notificationFromJson(dynamic value) {
     unread: !read,
     icon: style.icon,
     color: style.color,
+    type: type,
+    entityType: entityType,
+    entityId: entityId,
   );
 }
