@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -26,14 +29,30 @@ enum _Tab { posts, activities, certificates, about }
 class _ProfileScreenState extends State<ProfileScreen> {
   late Future<_ProfileData> _future;
   _Tab _tab = _Tab.posts;
-  int _activityFilter = 0; // 0 All, 1 Posts, 2 Comments, 3 Groups, 4 Events
+  int _activityFilter = 0; // 0 All, 1 Posts, 2 Groups, 3 Events
   bool _uploadingAvatar = false;
   bool _uploadingCover = false;
+
+  // ---- Add-certificate form state ----
+  bool _addingCert = false;
+  bool _savingCert = false;
+  final _certTitle = TextEditingController();
+  final _certIssuer = TextEditingController();
+  String? _certFileName;
+  Uint8List? _certBytes;
+  DateTime? _certIssuedOn;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+  }
+
+  @override
+  void dispose() {
+    _certTitle.dispose();
+    _certIssuer.dispose();
+    super.dispose();
   }
 
   Future<_ProfileData> _load() async {
@@ -45,16 +64,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
       api.users.myCertificates().then((r) => r.map(asMap).toList()).catchError(
           (_) => <Map<String, dynamic>>[]),
       api.users.myHr().catchError((_) => <String, dynamic>{}),
+      // Joined groups (not direct threads) — powers both the stat count and the
+      // Groups activity filter.
       api.groups
           .list()
-          .then((r) => r.map(groupFromJson).where((g) => g.joined && !g.isDirect).length)
-          .catchError((_) => 0),
+          .then((r) =>
+              r.map(groupFromJson).where((g) => g.joined && !g.isDirect).toList())
+          .catchError((_) => <Group>[]),
+      // Full profile JSON — carries fields the lightweight `me` Person omits
+      // (phone, manager, interests, hobbies, likes) so About mirrors the web.
+      api.users.get(me.id).catchError((_) => <String, dynamic>{}),
+      // Events the user RSVP'd to — powers the Events activity filter.
+      api.events
+          .list()
+          .then((r) =>
+              r.map(eventFromJson).where((e) => e.myRsvp.isNotEmpty).toList())
+          .catchError((_) => <EventItem>[]),
     ]);
     return _ProfileData(
       posts: results[0] as List<Post>,
       certificates: results[1] as List<Map<String, dynamic>>,
       hr: results[2] as Map<String, dynamic>,
-      groupCount: results[3] as int,
+      groups: results[3] as List<Group>,
+      profile: results[4] as Map<String, dynamic>,
+      events: results[5] as List<EventItem>,
     );
   }
 
@@ -64,7 +97,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _future = next;
     });
     await next.catchError((_) => _ProfileData(
-        posts: const [], certificates: const [], hr: const {}, groupCount: 0));
+        posts: const [],
+        certificates: const [],
+        hr: const {},
+        groups: const [],
+        profile: const {},
+        events: const []));
   }
 
   @override
@@ -394,7 +432,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           divider(),
           stat('${data?.groupCount ?? '—'}', 'Groups'),
           divider(),
-          stat('${data?.certificates.length ?? '—'}', 'Certificates'),
+          stat('${data?.kudosReceived ?? '—'}', 'Kudos received'),
         ],
       ),
     );
@@ -454,11 +492,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       case _Tab.posts:
         return _postsList(data.posts);
       case _Tab.activities:
-        return _activities(data.posts);
+        return _activities(data);
       case _Tab.certificates:
         return _certificates(data.certificates);
       case _Tab.about:
-        return _about(data.hr);
+        return _about(data);
     }
   }
 
@@ -489,11 +527,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ---- Activities -----------------------------------------------------------
 
-  Widget _activities(List<Post> posts) {
-    const filters = ['All', 'Posts', 'Comments', 'Groups', 'Events'];
-    // Only Posts activity is available from the API today; the other categories
-    // show an empty state (parity with the web placeholder).
-    final showPosts = _activityFilter == 0 || _activityFilter == 1;
+  Widget _activities(_ProfileData data) {
+    const filters = ['All', 'Posts', 'Groups', 'Events'];
+    final all = _activityFilter == 0;
+    final content = <Widget>[];
+
+    if ((all || _activityFilter == 1) && data.posts.isNotEmpty) {
+      content.add(_postsList(data.posts));
+    }
+    if ((all || _activityFilter == 2) && data.groups.isNotEmpty) {
+      content.add(_groupsList(data.groups));
+    }
+    if ((all || _activityFilter == 3) && data.events.isNotEmpty) {
+      content.add(_eventsList(data.events));
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -512,11 +560,117 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
         const SizedBox(height: ArdentSpacing.s4),
-        if (showPosts && posts.isNotEmpty)
-          _postsList(posts)
+        if (content.isEmpty)
+          _empty('Nothing in this category yet.')
         else
-          _empty('Nothing in this category yet.'),
+          for (final w in content) ...[
+            w,
+            const SizedBox(height: ArdentSpacing.s3),
+          ],
       ],
+    );
+  }
+
+  /// Joined-groups list for the Groups activity filter.
+  Widget _groupsList(List<Group> groups) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
+      child: SurfaceCard(
+        child: Column(
+          children: [
+            for (var i = 0; i < groups.length; i++) ...[
+              if (i > 0) const Divider(height: ArdentSpacing.s5),
+              Row(
+                children: [
+                  DsAvatar(
+                    initials: initialsFrom(groups[i].name),
+                    color: groups[i].color,
+                    imageUrl: groups[i].photoUrl,
+                    size: 40,
+                  ),
+                  const SizedBox(width: ArdentSpacing.s3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(groups[i].name,
+                            style: text.titleMedium?.copyWith(fontSize: 14)),
+                        Text('${groups[i].members} members', style: text.bodySmall),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// RSVP'd-events list for the Events activity filter.
+  Widget _eventsList(List<EventItem> events) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
+      child: SurfaceCard(
+        child: Column(
+          children: [
+            for (var i = 0; i < events.length; i++) ...[
+              if (i > 0) const Divider(height: ArdentSpacing.s5),
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: ArdentColors.bgSubtle,
+                      borderRadius: BorderRadius.circular(ArdentRadii.sm),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(events[i].mon.toUpperCase(),
+                            style: text.labelSmall
+                                ?.copyWith(color: ArdentColors.accent, height: 1)),
+                        Text(events[i].day,
+                            style: text.titleMedium
+                                ?.copyWith(fontSize: 15, height: 1.1)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: ArdentSpacing.s3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(events[i].title,
+                            style: text.titleMedium?.copyWith(fontSize: 14)),
+                        Text(
+                          [
+                            events[i].time,
+                            if (events[i].location.isNotEmpty) events[i].location,
+                          ].join(' · '),
+                          style: text.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  DsChip(
+                    label: events[i].myRsvp == 'going' ? 'Going' : 'Interested',
+                    fg: ArdentColors.accent,
+                    bg: ArdentColors.bgSubtle,
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -543,90 +697,493 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ---- Certificates ---------------------------------------------------------
 
   Widget _certificates(List<Map<String, dynamic>> certs) {
-    if (certs.isEmpty) return _empty('No certificates yet.');
     final text = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
-      child: SurfaceCard(
-        child: Column(
-          children: [
-            for (var i = 0; i < certs.length; i++) ...[
-              if (i > 0) const Divider(height: ArdentSpacing.s5),
-              Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header + add toggle (web: "CERTIFICATES — Images and PDFs, up to
+          // 10 MB each." with an Add certificate action).
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Overline('Certificates'),
+                    const SizedBox(height: 2),
+                    Text('Images and PDFs, up to 10 MB each.',
+                        style: text.bodySmall),
+                  ],
+                ),
+              ),
+              if (!_addingCert)
+                FilledButton.icon(
+                  onPressed: () => setState(() => _addingCert = true),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('Add certificate'),
+                ),
+            ],
+          ),
+          const SizedBox(height: ArdentSpacing.s3),
+          if (_addingCert) ...[
+            _certForm(),
+            const SizedBox(height: ArdentSpacing.s4),
+          ],
+          if (certs.isEmpty)
+            _empty('No certificates yet.')
+          else
+            SurfaceCard(
+              child: Column(
                 children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: ArdentColors.statusPendingBg,
-                      borderRadius: BorderRadius.circular(ArdentRadii.sm),
-                    ),
-                    child: const Icon(Icons.workspace_premium_rounded,
-                        color: Color(0xFFC77700), size: 22),
-                  ),
-                  const SizedBox(width: ArdentSpacing.s3),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  for (var i = 0; i < certs.length; i++) ...[
+                    if (i > 0) const Divider(height: ArdentSpacing.s5),
+                    Row(
                       children: [
-                        Text(certs[i]['title']?.toString() ?? 'Certificate',
-                            style: text.titleMedium?.copyWith(fontSize: 14)),
-                        if ((certs[i]['issuer'] ?? certs[i]['issuedOn']) != null)
-                          Text(
-                            certs[i]['issuer']?.toString() ??
-                                relativeDate(certs[i]['issuedOn']),
-                            style: text.bodySmall,
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: ArdentColors.statusPendingBg,
+                            borderRadius: BorderRadius.circular(ArdentRadii.sm),
                           ),
+                          child: const Icon(Icons.workspace_premium_rounded,
+                              color: Color(0xFFC77700), size: 22),
+                        ),
+                        const SizedBox(width: ArdentSpacing.s3),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(certs[i]['title']?.toString() ?? 'Certificate',
+                                  style: text.titleMedium?.copyWith(fontSize: 14)),
+                              if (_certSubtitle(certs[i]).isNotEmpty)
+                                Text(_certSubtitle(certs[i]), style: text.bodySmall),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => _deleteCertificate(certs[i]),
+                          icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                          color: ArdentColors.fg3,
+                          tooltip: 'Delete',
+                        ),
                       ],
                     ),
-                  ),
+                  ],
                 ],
               ),
-            ],
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
 
-  // ---- About ----------------------------------------------------------------
+  /// Issuer and/or issued date line under a certificate title.
+  String _certSubtitle(Map<String, dynamic> cert) {
+    final issuer = cert['issuer']?.toString().trim() ?? '';
+    final issued = cert['issuedOn'];
+    final date = issued == null ? '' : relativeDate(issued);
+    return [issuer, date].where((s) => s.isNotEmpty).join(' · ');
+  }
 
-  Widget _about(Map<String, dynamic> hr) {
-    final me = AppSession.instance.me;
+  /// The inline "Add certificate" form (web parity: file, title, issuer, date).
+  Widget _certForm() {
     final text = Theme.of(context).textTheme;
-    final employeeId = hr['employeeId']?.toString();
-    final dateHired = hr['dateHired']?.toString();
-    final rows = <Widget>[];
-    void line(IconData icon, String label) => rows.add(Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
+    return SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(icon, size: 17, color: ArdentColors.fg3),
+              OutlinedButton.icon(
+                onPressed: _savingCert ? null : _pickCertFile,
+                icon: const Icon(Icons.attach_file_rounded, size: 18),
+                label: const Text('Choose file'),
+              ),
               const SizedBox(width: ArdentSpacing.s3),
-              Expanded(child: Text(label, style: text.bodyLarge)),
+              Expanded(
+                child: Text(
+                  _certFileName ?? 'No file chosen — image or PDF',
+                  style: text.bodySmall?.copyWith(
+                      color: _certFileName == null
+                          ? ArdentColors.fg3
+                          : ArdentColors.fg2),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
-        ));
+          const SizedBox(height: ArdentSpacing.s3),
+          Text('Title', style: text.labelMedium),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _certTitle,
+            decoration: const InputDecoration(
+                hintText: 'e.g. AWS Certified Solutions Architect'),
+          ),
+          const SizedBox(height: ArdentSpacing.s3),
+          Text('Issued by', style: text.labelMedium),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _certIssuer,
+            decoration: const InputDecoration(hintText: 'e.g. Amazon Web Services'),
+          ),
+          const SizedBox(height: ArdentSpacing.s3),
+          Text('Issue date', style: text.labelMedium),
+          const SizedBox(height: 4),
+          OutlinedButton.icon(
+            onPressed: _savingCert ? null : _pickCertDate,
+            icon: const Icon(Icons.calendar_today_outlined, size: 16),
+            label: Text(
+              _certIssuedOn == null
+                  ? 'mm/dd/yyyy'
+                  : relativeDateOnly(_certIssuedOn!.toIso8601String()),
+            ),
+          ),
+          const SizedBox(height: ArdentSpacing.s4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: _savingCert ? null : _cancelCertForm,
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: ArdentSpacing.s2),
+              FilledButton(
+                onPressed: _savingCert ? null : _submitCertificate,
+                child: _savingCert
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Add certificate'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
-    if (me.bio.isNotEmpty) line(Icons.info_outline_rounded, me.bio);
-    if (me.email.isNotEmpty) line(Icons.mail_outline_rounded, me.email);
-    if (me.department.isNotEmpty) line(Icons.apartment_rounded, me.department);
-    if (me.location.isNotEmpty) line(Icons.place_outlined, me.location);
-    if (employeeId != null && employeeId.isNotEmpty) {
-      line(Icons.badge_outlined, 'Employee ID: $employeeId');
+  Future<void> _pickCertFile() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final res = await FilePicker.platform.pickFiles(
+        withData: true,
+        type: FileType.custom,
+        allowedExtensions: const [
+          'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'pdf',
+        ],
+      );
+      final file = res?.files.singleOrNull;
+      if (file == null || file.bytes == null) return;
+      const maxBytes = 10 * 1024 * 1024;
+      if (file.bytes!.lengthInBytes > maxBytes) {
+        messenger.showSnackBar(
+            const SnackBar(content: Text('File must be 10 MB or smaller')));
+        return;
+      }
+      setState(() {
+        _certBytes = file.bytes;
+        _certFileName = file.name;
+      });
+    } catch (_) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Could not pick file')));
     }
-    if (dateHired != null && dateHired.isNotEmpty) {
-      line(Icons.cake_outlined, 'Joined ${relativeDate(dateHired)}');
+  }
+
+  Future<void> _pickCertDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _certIssuedOn ?? now,
+      firstDate: DateTime(1970),
+      lastDate: DateTime(now.year + 1, 12, 31),
+    );
+    if (picked != null) setState(() => _certIssuedOn = picked);
+  }
+
+  void _cancelCertForm() {
+    setState(() {
+      _addingCert = false;
+      _certBytes = null;
+      _certFileName = null;
+      _certIssuedOn = null;
+      _certTitle.clear();
+      _certIssuer.clear();
+    });
+  }
+
+  Future<void> _submitCertificate() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final title = _certTitle.text.trim();
+    if (_certBytes == null || _certFileName == null) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Choose an image or PDF first')));
+      return;
     }
-    line(hr['linked'] == true ? Icons.link_rounded : Icons.link_off_rounded,
-        hr['linked'] == true ? 'Linked to HR system' : 'Not linked to HR system');
+    if (title.isEmpty) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Title is required')));
+      return;
+    }
+    setState(() => _savingCert = true);
+    try {
+      final issuer = _certIssuer.text.trim();
+      await Api.instance.users.addCertificate(
+        bytes: _certBytes!,
+        filename: _certFileName!,
+        title: title,
+        issuer: issuer.isEmpty ? null : issuer,
+        issuedOn: _certIssuedOn == null
+            ? null
+            : relativeDateOnly(_certIssuedOn!.toIso8601String()),
+        contentType: _certContentType(_certFileName!),
+      );
+      if (!mounted) return;
+      _cancelCertForm();
+      setState(() => _savingCert = false);
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Certificate added')));
+      await _refresh();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _savingCert = false);
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _savingCert = false);
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Could not add certificate')));
+    }
+  }
+
+  Future<void> _deleteCertificate(Map<String, dynamic> cert) async {
+    final id = (cert['id'] ?? cert['certificateId'])?.toString();
+    if (id == null || id.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete certificate?'),
+        content: Text(
+            'Remove “${cert['title'] ?? 'this certificate'}” from your profile?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await Api.instance.users.deleteCertificate(id);
+      if (!mounted) return;
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Certificate removed')));
+      await _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Could not delete certificate')));
+    }
+  }
+
+  static String _certContentType(String name) {
+    final ext = _ext(name, fallback: '');
+    if (ext == 'pdf') return 'application/pdf';
+    if (ext.isEmpty) return 'application/octet-stream';
+    return 'image/${ext == 'jpg' ? 'jpeg' : ext}';
+  }
+
+  // ---- About ----------------------------------------------------------------
+
+  Widget _about(_ProfileData data) {
+    final hr = data.hr;
+    final profile = data.profile;
+    final me = AppSession.instance.me;
+
+    final employeeId = hr['employeeId']?.toString();
+    final dateHired = hr['dateHired']?.toString();
+    final phone = _profileString(profile, ['phone', 'phoneNumber', 'mobile']);
+    final manager = _managerName(profile);
+    final birthday = _birthdayLabel(hr);
+
+    // Labelled info rows — mirrors the web About form's field list.
+    final rows = <Widget>[
+      if (me.department.isNotEmpty)
+        _infoRow(Icons.apartment_rounded, 'Department', me.department),
+      if (manager.isNotEmpty) _infoRow(Icons.person_outline_rounded, 'Manager', manager),
+      if (me.location.isNotEmpty)
+        _infoRow(Icons.place_outlined, 'Location', me.location),
+      if (me.email.isNotEmpty) _infoRow(Icons.mail_outline_rounded, 'Email', me.email),
+      if (employeeId != null && employeeId.isNotEmpty)
+        _infoRow(Icons.badge_outlined, 'Employee ID', employeeId),
+      if (phone.isNotEmpty) _infoRow(Icons.phone_outlined, 'Phone', phone),
+      if (dateHired != null && dateHired.isNotEmpty)
+        _infoRow(Icons.event_outlined, 'Joined', relativeDate(dateHired)),
+      if (birthday.isNotEmpty) _infoRow(Icons.cake_outlined, 'Birthday', birthday),
+    ];
+
+    final interests = _profileList(profile, ['interests']);
+    final hobbies = _profileList(profile, ['hobbies']);
+    final likes = _profileList(profile, ['likes', 'favorites']);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: ArdentSpacing.s4),
-      child: SurfaceCard(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SurfaceCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Overline('About'),
+                const SizedBox(height: ArdentSpacing.s2),
+                Text(
+                  me.bio.isNotEmpty ? me.bio : 'No bio yet.',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: me.bio.isNotEmpty ? null : ArdentColors.fg3,
+                      ),
+                ),
+                if (rows.isNotEmpty) ...[
+                  const SizedBox(height: ArdentSpacing.s3),
+                  const Divider(height: 1, color: ArdentColors.border),
+                  const SizedBox(height: ArdentSpacing.s2),
+                  ...rows,
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: ArdentSpacing.s4),
+          _tagSection(Icons.lightbulb_outline_rounded, 'Interests', interests),
+          const SizedBox(height: ArdentSpacing.s4),
+          _tagSection(Icons.emoji_events_outlined, 'Hobbies', hobbies),
+          const SizedBox(height: ArdentSpacing.s4),
+          _tagSection(Icons.favorite_outline_rounded, 'Likes', likes),
+        ],
       ),
     );
+  }
+
+  /// One labelled About row: icon + muted label + value.
+  Widget _infoRow(IconData icon, String label, String value) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: ArdentColors.fg3),
+          const SizedBox(width: ArdentSpacing.s3),
+          SizedBox(
+            width: 96,
+            child: Text(label,
+                style: text.bodyMedium?.copyWith(color: ArdentColors.fg3)),
+          ),
+          const SizedBox(width: ArdentSpacing.s2),
+          Expanded(
+            child: Text(value,
+                style: text.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// An Interests / Hobbies / Likes card with pill tags (or an empty note).
+  Widget _tagSection(IconData icon, String title, List<String> tags) {
+    return SurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 15, color: ArdentColors.fg3),
+              const SizedBox(width: ArdentSpacing.s2),
+              Overline(title),
+            ],
+          ),
+          const SizedBox(height: ArdentSpacing.s3),
+          if (tags.isEmpty)
+            Text('None yet.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: ArdentColors.fg3))
+          else
+            Wrap(
+              spacing: ArdentSpacing.s2,
+              runSpacing: ArdentSpacing.s2,
+              children: [
+                for (final t in tags)
+                  DsChip(
+                    label: t,
+                    fg: ArdentColors.fg2,
+                    bg: ArdentColors.bgSubtle,
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ---- About field helpers --------------------------------------------------
+
+  /// First non-empty string among [keys] in the raw profile map.
+  String _profileString(Map<String, dynamic> profile, List<String> keys) {
+    for (final k in keys) {
+      final v = profile[k];
+      if (v != null && v.toString().trim().isNotEmpty) return v.toString().trim();
+    }
+    return '';
+  }
+
+  /// Manager can arrive as a plain string or a nested `{ name }` object.
+  String _managerName(Map<String, dynamic> profile) {
+    final v = profile['manager'] ?? profile['reportsTo'];
+    if (v is Map) {
+      return (v['name'] ?? v['fullName'] ?? '').toString().trim();
+    }
+    return v?.toString().trim() ?? '';
+  }
+
+  /// A list of tag strings from the profile map, tolerating list-of-strings or
+  /// list-of-`{name}` shapes; other/missing values yield an empty list.
+  List<String> _profileList(Map<String, dynamic> profile, List<String> keys) {
+    for (final k in keys) {
+      final v = profile[k];
+      if (v is List) {
+        return v
+            .map((e) => e is Map ? (e['name'] ?? e['label'] ?? '').toString() : e.toString())
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+    }
+    return const [];
+  }
+
+  /// Birthday as `Month D` (no year) from HR `birthMonth`/`birthDay`.
+  String _birthdayLabel(Map<String, dynamic> hr) {
+    final month = int.tryParse(hr['birthMonth']?.toString() ?? '');
+    final day = int.tryParse(hr['birthDay']?.toString() ?? '');
+    if (month == null || day == null || month < 1 || month > 12) return '';
+    const names = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    return '${names[month - 1]} $day';
   }
 }
 
@@ -635,10 +1192,33 @@ class _ProfileData {
     required this.posts,
     required this.certificates,
     required this.hr,
-    required this.groupCount,
+    required this.groups,
+    required this.profile,
+    required this.events,
   });
   final List<Post> posts;
   final List<Map<String, dynamic>> certificates;
   final Map<String, dynamic> hr;
-  final int groupCount;
+
+  /// Groups the user has joined (excludes direct threads).
+  final List<Group> groups;
+
+  /// Events the user has RSVP'd to (going or interested).
+  final List<EventItem> events;
+
+  /// Raw `GET /users/:id` JSON — source for phone/manager/interests/hobbies/
+  /// likes that the lightweight [Person] model does not carry.
+  final Map<String, dynamic> profile;
+
+  int get groupCount => groups.length;
+
+  /// Kudos received, read from the profile JSON (web parity stat).
+  int get kudosReceived {
+    for (final k in ['kudosReceived', 'kudosCount', 'kudos', 'kudosGiven']) {
+      final v = profile[k];
+      final n = v is num ? v.toInt() : int.tryParse(v?.toString() ?? '');
+      if (n != null) return n;
+    }
+    return 0;
+  }
 }
