@@ -23,7 +23,7 @@ open ios/Runner.xcworkspace
 - **Uncheck** "Include UI Extension".
 - Finish. If asked to activate the scheme, click **Activate**.
 - Set the extension target's **Bundle Identifier** to
-  `com.example.ardentCommunity.broadcast` (must equal `RTCScreenSharingExtension`
+  `com.ardentnetworks.community.broadcast` (must equal `RTCScreenSharingExtension`
   in `ios/Runner/Info.plist`).
 - Set its **iOS Deployment Target** to match Runner (e.g. iOS 13+).
 
@@ -44,7 +44,7 @@ Replace them with the files here:
 ## 4. App Group capability (both targets)
 On **each** of the `Runner` target and the `BroadcastExtension` target:
 - **Signing & Capabilities ▸ + Capability ▸ App Groups.**
-- Add / check `group.com.example.ardentCommunity`.
+- Add / check `group.com.ardentnetworks.community`.
 
 This must match:
 - `ios/Runner/Runner.entitlements`
@@ -53,7 +53,7 @@ This must match:
 - `RTCAppGroupIdentifier` in `ios/Runner/Info.plist`
 - `appGroupIdentifier` in `SampleHandler.swift`
 
-> If your real bundle id is **not** `com.example.ardentCommunity`, change it
+> If your real bundle id is **not** `com.ardentnetworks.community`, change it
 > everywhere above (app group id, extension bundle id, and all four references).
 
 ## 5. Build & run on a real device

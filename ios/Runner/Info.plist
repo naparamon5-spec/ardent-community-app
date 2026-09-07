@@ -85,8 +85,8 @@
 	     the App Group capability and the extension target in Xcode
 	     (see ios/BroadcastExtension/README.md). -->
 	<key>RTCAppGroupIdentifier</key>
-	<string>group.com.example.ardentCommunity</string>
+	<string>group.com.ardentnetworks.community</string>
 	<key>RTCScreenSharingExtension</key>
-	<string>com.example.ardentCommunity.broadcast</string>
+	<string>com.ardentnetworks.community.broadcast</string>
 </dict>
 </plist>

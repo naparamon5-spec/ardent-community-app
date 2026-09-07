@@ -16,7 +16,7 @@ import ReplayKit
 
 class SampleHandler: RPBroadcastSampleHandler {
     // Must match RTCAppGroupIdentifier in the app's Info.plist.
-    private let appGroupIdentifier = "group.com.example.ardentCommunity"
+    private let appGroupIdentifier = "group.com.ardentnetworks.community"
 
     private var clientConnection: SocketConnection?
     private var uploader: SampleUploader?

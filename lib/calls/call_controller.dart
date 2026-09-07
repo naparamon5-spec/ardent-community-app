@@ -188,8 +188,22 @@ class CallController extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// True on the iOS Simulator, which has no camera and no ReplayKit screen
+  /// capture — video and screen share physically cannot work there, only on a
+  /// real device. Xcode sets `SIMULATOR_UDID` in the Simulator's environment.
+  bool get isIosSimulator =>
+      Platform.isIOS && Platform.environment.containsKey('SIMULATOR_UDID');
+
   Future<void> toggleCamera() async {
     final turningOn = !cameraEnabled;
+    if (turningOn && isIosSimulator) {
+      // No camera hardware on the Simulator — say so instead of flipping the
+      // button on with a black, frame-less video track.
+      mediaError =
+          'Video isn\'t available on the iOS Simulator (no camera). Try it on a physical iPhone or iPad.';
+      notifyListeners();
+      return;
+    }
     if (turningOn) {
       final cam = await Permission.camera.request();
       if (!cam.isGranted) {
@@ -240,7 +254,7 @@ class CallController extends ChangeNotifier {
     // screen capture is unsupported there, so the broadcast picker never
     // produces frames. Fail fast with a clear message instead of silently
     // throwing so the user isn't left wondering why nothing happened.
-    if (Platform.isIOS && Platform.environment.containsKey('SIMULATOR_UDID')) {
+    if (isIosSimulator) {
       debugPrint('[Call] screen share: skipped — iOS Simulator unsupported');
       mediaError =
           'Screen sharing isn\'t available on the iOS Simulator. Try it on a physical iPhone or iPad.';
