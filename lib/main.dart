@@ -1,6 +1,10 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:livekit_client/livekit_client.dart' show LiveKitClient;
 
 import 'api/api.dart';
 import 'api/session.dart';
@@ -32,6 +36,26 @@ Future<void> main() async {
   // Restore any saved JWT so authenticated API calls (Api.instance.*) work from
   // launch. The backend client lives under lib/api/ — see lib/api/api.dart.
   await AuthStore.instance.load();
+
+  // The iOS Simulator has no working voice-processing audio unit, so LiveKit's
+  // default mic capture fails with `AudioProcessingException(-4010)` and calls
+  // can't connect there. Bypassing voice processing falls back to a plain audio
+  // path the Simulator supports, letting us test calls on it. This disables
+  // hardware echo cancellation, so we gate it to non-release iOS builds ONLY —
+  // release builds (real devices, production) keep full voice processing.
+  //
+  // NOTE: this runs at native WebRTC init time, so it only takes effect on a
+  // full cold launch (`flutter run`), NOT a hot restart.
+  if (Platform.isIOS && !kReleaseMode) {
+    try {
+      await LiveKitClient.initialize(bypassVoiceProcessing: true);
+      debugPrint('[Call] iOS debug build — bypassing voice processing for '
+          'Simulator audio');
+    } catch (e) {
+      debugPrint('[Call] LiveKitClient.initialize failed: $e');
+    }
+  }
+
   runApp(const ArdentCommunityApp());
 }
 

@@ -334,10 +334,27 @@ class CallController extends ChangeNotifier {
   /// A short, human-readable reason for a LiveKit connection failure.
   String _connectErrorText(Object e) {
     final s = e.toString().toLowerCase();
+    // Microphone/audio-engine failures (e.g. the iOS Simulator's missing
+    // voice-processing unit, code -4010, or a denied mic permission). Check
+    // this first: these are NOT authorization problems.
+    if (s.contains('audioprocessingexception') ||
+        s.contains('audio engine') ||
+        s.contains('-4010') ||
+        s.contains('startcapture')) {
+      return 'Microphone unavailable. Check mic permission, or try a real '
+          'device — the iOS Simulator can\'t capture call audio.';
+    }
     if (s.contains('timeout') || s.contains('timed out')) {
       return 'Call server timed out. Check your connection.';
     }
-    if (s.contains('token') || s.contains('unauthorized') || s.contains('401')) {
+    // Only treat this as an auth failure on a genuine auth signal. (A plain
+    // 'token' substring is too broad — LiveKit connection/signaling errors
+    // mention "token" without being authorization failures.)
+    if (s.contains('unauthorized') ||
+        s.contains('401') ||
+        s.contains('invalid token') ||
+        s.contains('token expired') ||
+        s.contains('token is invalid')) {
       return 'Call authorization failed.';
     }
     return 'Couldn\'t connect the call audio.';
