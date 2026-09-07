@@ -240,37 +240,61 @@ class CallController extends ChangeNotifier {
       if (Platform.isAndroid) {
         // Android: ask for screen-capture consent, then bring up the
         // media-projection foreground service before publishing.
+        debugPrint('[Call] screen share: requesting capture permission…');
         final granted = await webrtc.Helper.requestCapturePermission();
+        debugPrint('[Call] screen share: capture permission granted=$granted');
         if (!granted) {
-          mediaError = 'Screen share was not allowed.';
+          mediaError = 'Screen share was declined.';
           notifyListeners();
           return;
         }
+        debugPrint('[Call] screen share: starting foreground service…');
         final ready = await _ensureBackgroundService();
+        debugPrint('[Call] screen share: foreground service ready=$ready');
         if (!ready) {
-          mediaError = 'Couldn\'t start screen sharing.';
+          mediaError = 'Couldn\'t start the screen-share service.';
           notifyListeners();
           return;
         }
       }
       // iOS presents the system broadcast picker here (needs the Broadcast
       // Upload Extension configured — see ios/BroadcastExtension/README.md).
+      debugPrint('[Call] screen share: setScreenShareEnabled(true)…');
       await lp.setScreenShareEnabled(true);
       screenShareEnabled = true;
       mediaError = null;
       notifyListeners();
-    } catch (e) {
+      debugPrint('[Call] screen share: enabled');
+    } catch (e, st) {
+      debugPrint('[Call] screen share FAILED: $e');
+      debugPrintStack(stackTrace: st, maxFrames: 8);
       screenShareEnabled = false;
       if (Platform.isAndroid) {
         try {
           await FlutterBackground.disableBackgroundExecution();
         } catch (_) {}
       }
-      mediaError = Platform.isIOS
-          ? 'Screen sharing on iOS needs a broadcast extension.'
-          : 'Screen share unavailable.';
+      mediaError = _screenShareErrorText(e);
       notifyListeners();
     }
+  }
+
+  /// Turns a screen-share failure into a short, actionable message — and
+  /// surfaces the underlying error so the cause is visible, not hidden.
+  String _screenShareErrorText(Object e) {
+    final s = e.toString();
+    final lower = s.toLowerCase();
+    // A brand-new native plugin (flutter_webrtc/flutter_background) that wasn't
+    // compiled in yet: hot restart isn't enough — the app must be fully rebuilt.
+    if (lower.contains('missingplugin') || lower.contains('no implementation')) {
+      return 'Update needs a full rebuild (stop & re-run the app, not hot reload).';
+    }
+    if (Platform.isIOS) {
+      return 'iOS screen share needs the broadcast extension (see setup).';
+    }
+    // Show the real reason on Android instead of a generic line.
+    final trimmed = s.length > 120 ? '${s.substring(0, 120)}…' : s;
+    return 'Screen share failed: $trimmed';
   }
 
   Future<bool> _ensureBackgroundService() async {
