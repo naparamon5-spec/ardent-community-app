@@ -138,6 +138,17 @@ class CallScreen extends StatelessWidget {
             ),
           ),
 
+        // Minimize to a floating bar (keeps the call live).
+        Positioned(
+          top: 8,
+          left: 8,
+          child: _IconChip(
+            icon: Icons.expand_more_rounded,
+            tooltip: 'Minimize',
+            onTap: c.minimize,
+          ),
+        ),
+
         // Connecting / error banner.
         if (c.connectingMedia || c.mediaError != null)
           Positioned(
@@ -172,6 +183,22 @@ class CallScreen extends StatelessWidget {
   }
 
   Widget _remoteStage(CallController c, List<RemoteParticipant> remotes) {
+    // If anyone is sharing their screen, show that full-bleed — it's the focus
+    // of the call, the way the web app promotes a shared screen.
+    for (final p in remotes) {
+      for (final pub in p.videoTrackPublications) {
+        final track = pub.track;
+        if (!pub.muted &&
+            pub.source == TrackSource.screenShareVideo &&
+            track is VideoTrack) {
+          return _ParticipantTile(
+            participant: p,
+            label: '${p.name.isNotEmpty ? p.name : 'Someone'} · screen',
+            preferredTrack: track,
+          );
+        }
+      }
+    }
     if (remotes.isEmpty) {
       // No one else in the room yet — show the peer/group avatar.
       return Center(
@@ -219,8 +246,12 @@ class CallScreen extends StatelessWidget {
   }
 
   Widget _activeControls(CallController c) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    // Wrap so the extra controls (video, mic, screen share, speaker, end) flow
+    // onto a second row on narrow phones instead of overflowing.
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 12,
       children: [
         _RoundButton(
           icon: c.micEnabled ? Icons.mic_rounded : Icons.mic_off_rounded,
@@ -229,7 +260,6 @@ class CallScreen extends StatelessWidget {
           label: c.micEnabled ? 'Mute' : 'Unmute',
           onTap: c.toggleMic,
         ),
-        const SizedBox(width: 14),
         _RoundButton(
           icon: c.cameraEnabled
               ? Icons.videocam_rounded
@@ -239,7 +269,15 @@ class CallScreen extends StatelessWidget {
           label: 'Video',
           onTap: c.toggleCamera,
         ),
-        const SizedBox(width: 14),
+        _RoundButton(
+          icon: c.screenShareEnabled
+              ? Icons.stop_screen_share_rounded
+              : Icons.screen_share_rounded,
+          color: c.screenShareEnabled ? Colors.white : Colors.white24,
+          iconColor: c.screenShareEnabled ? ArdentColors.navy900 : Colors.white,
+          label: c.screenShareEnabled ? 'Stop' : 'Share',
+          onTap: c.toggleScreenShare,
+        ),
         _RoundButton(
           icon: c.speakerOn
               ? Icons.volume_up_rounded
@@ -249,7 +287,6 @@ class CallScreen extends StatelessWidget {
           label: 'Speaker',
           onTap: c.toggleSpeaker,
         ),
-        const SizedBox(width: 14),
         _RoundButton(
           icon: Icons.call_end_rounded,
           color: ArdentColors.crimson500,
@@ -261,6 +298,32 @@ class CallScreen extends StatelessWidget {
   }
 }
 
+/// A small translucent round icon button used for the minimize affordance.
+class _IconChip extends StatelessWidget {
+  const _IconChip({required this.icon, required this.onTap, this.tooltip});
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = Material(
+      color: Colors.black.withValues(alpha: 0.35),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(icon, color: Colors.white, size: 26),
+        ),
+      ),
+    );
+    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
+  }
+}
+
 /// One participant's live video, or their initials avatar when they have no
 /// (unmuted, subscribed) camera track.
 class _ParticipantTile extends StatelessWidget {
@@ -268,13 +331,19 @@ class _ParticipantTile extends StatelessWidget {
     required this.participant,
     this.label = '',
     this.mirror = false,
+    this.preferredTrack,
   });
 
   final Participant participant;
   final String label;
   final bool mirror;
 
+  /// When set, render this exact track (e.g. a screen-share track) instead of
+  /// auto-picking the participant's first camera track.
+  final VideoTrack? preferredTrack;
+
   VideoTrack? get _videoTrack {
+    if (preferredTrack != null) return preferredTrack;
     for (final pub in participant.videoTrackPublications) {
       final track = pub.track;
       if (track is VideoTrack && !pub.muted) return track;

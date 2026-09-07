@@ -1,6 +1,8 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_background/flutter_background.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -9,6 +11,7 @@ import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../screens/call_screen.dart';
+import '../screens/mini_call_bar.dart';
 
 /// Where a call is in its lifecycle.
 enum CallPhase { idle, outgoing, incoming, active, ended }
@@ -54,8 +57,13 @@ class CallController extends ChangeNotifier {
   bool micEnabled = true;
   bool cameraEnabled = false;
   bool speakerOn = true;
+  bool screenShareEnabled = false;
   String? mediaError;
 
+  /// Whether the full-screen call UI is minimized to a floating bar.
+  bool minimized = false;
+
+  bool _bgInitialized = false;
   String _pendingGroupId = '';
 
   bool get isBusy => phase != CallPhase.idle;
@@ -204,6 +212,121 @@ class CallController extends ChangeNotifier {
       // ignore: deprecated_member_use
       await Hardware.instance.setSpeakerphoneOn(speakerOn);
     } catch (_) {}
+  }
+
+  /// Start/stop sharing this device's screen into the call (like the web app's
+  /// "Share screen"). On Android this runs a media-projection foreground
+  /// service so capture survives backgrounding; on iOS it needs a Broadcast
+  /// Upload Extension (a native target) — without one, this fails gracefully.
+  Future<void> toggleScreenShare() async {
+    final lp = room?.localParticipant;
+    if (lp == null) return;
+
+    if (screenShareEnabled) {
+      try {
+        await lp.setScreenShareEnabled(false);
+      } catch (_) {}
+      screenShareEnabled = false;
+      if (Platform.isAndroid) {
+        try {
+          await FlutterBackground.disableBackgroundExecution();
+        } catch (_) {}
+      }
+      notifyListeners();
+      return;
+    }
+
+    try {
+      if (Platform.isAndroid) {
+        // Android: ask for screen-capture consent, then bring up the
+        // media-projection foreground service before publishing.
+        final granted = await webrtc.Helper.requestCapturePermission();
+        if (!granted) {
+          mediaError = 'Screen share was not allowed.';
+          notifyListeners();
+          return;
+        }
+        final ready = await _ensureBackgroundService();
+        if (!ready) {
+          mediaError = 'Couldn\'t start screen sharing.';
+          notifyListeners();
+          return;
+        }
+      }
+      // iOS presents the system broadcast picker here (needs the Broadcast
+      // Upload Extension configured — see ios/BroadcastExtension/README.md).
+      await lp.setScreenShareEnabled(true);
+      screenShareEnabled = true;
+      mediaError = null;
+      notifyListeners();
+    } catch (e) {
+      screenShareEnabled = false;
+      if (Platform.isAndroid) {
+        try {
+          await FlutterBackground.disableBackgroundExecution();
+        } catch (_) {}
+      }
+      mediaError = Platform.isIOS
+          ? 'Screen sharing on iOS needs a broadcast extension.'
+          : 'Screen share unavailable.';
+      notifyListeners();
+    }
+  }
+
+  Future<bool> _ensureBackgroundService() async {
+    if (!_bgInitialized) {
+      const config = FlutterBackgroundAndroidConfig(
+        notificationTitle: 'Ardent call',
+        notificationText: 'Sharing your screen',
+        notificationImportance: AndroidNotificationImportance.normal,
+        notificationIcon: AndroidResource(name: 'ic_launcher', defType: 'mipmap'),
+        shouldRequestBatteryOptimizationsOff: false,
+      );
+      _bgInitialized = await FlutterBackground.initialize(androidConfig: config);
+    }
+    if (!_bgInitialized) return false;
+    if (FlutterBackground.isBackgroundExecutionEnabled) return true;
+    return FlutterBackground.enableBackgroundExecution();
+  }
+
+  // ---- Minimize / full screen ------------------------------------------------
+
+  /// Collapse the full-screen call UI to a floating bar over the app, keeping
+  /// the call live. Tapping the bar (or [maximize]) restores full screen.
+  void minimize() {
+    if (minimized || !isBusy) return;
+    minimized = true;
+    // Pop the full-screen route without ending the call (a programmatic pop
+    // does not trip CallScreen's back-to-hang-up guard), then float the bar.
+    if (_routeOpen) {
+      _navKey?.currentState?.pop();
+      _routeOpen = false;
+    }
+    _showMiniBar();
+    notifyListeners();
+  }
+
+  /// Restore the full-screen call UI from the minimized bar.
+  void maximize() {
+    if (!minimized) return;
+    minimized = false;
+    _removeMiniBar();
+    _showUi();
+    notifyListeners();
+  }
+
+  OverlayEntry? _miniBar;
+
+  void _showMiniBar() {
+    final overlay = _navKey?.currentState?.overlay;
+    if (overlay == null || _miniBar != null) return;
+    _miniBar = OverlayEntry(builder: (_) => const MiniCallBar());
+    overlay.insert(_miniBar!);
+  }
+
+  void _removeMiniBar() {
+    _miniBar?.remove();
+    _miniBar = null;
   }
 
   // ---- Media connection ------------------------------------------------------
@@ -438,6 +561,11 @@ class CallController extends ChangeNotifier {
 
   void _end() {
     _teardownMedia();
+    _removeMiniBar();
+    if (Platform.isAndroid && screenShareEnabled) {
+      // Stop the media-projection foreground service on hang-up.
+      FlutterBackground.disableBackgroundExecution().catchError((_) => false);
+    }
     phase = CallPhase.ended;
     notifyListeners();
     _dismissUi();
@@ -460,6 +588,8 @@ class CallController extends ChangeNotifier {
     micEnabled = true;
     cameraEnabled = false;
     speakerOn = true;
+    screenShareEnabled = false;
+    minimized = false;
     // statusMessage / mediaError are left for the UI to show briefly.
   }
 
