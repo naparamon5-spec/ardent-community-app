@@ -77,8 +77,8 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Allow access to your photos to share them to your My Day story.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Allow access to your camera to add photos or videos to your story.</string>
+	<string>Allow access to your camera for video calls and to add photos or videos to your story.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allow access to your microphone to record videos for your story.</string>
+	<string>Allow access to your microphone for voice and video calls and to record story videos.</string>
 </dict>
 </plist>

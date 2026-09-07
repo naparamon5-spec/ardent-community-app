@@ -61,40 +61,55 @@ class RealtimeService {
     on('presence:update', (d) => handler(ids(d)));
   }
 
-  // ---- 1:1 voice calls ------------------------------------------------------
+  // ---- Voice / video calls (LiveKit) ----------------------------------------
   //
-  // Signalling shares this same authenticated connection (see docs §Voice
-  // Calls). Client → server events take an acknowledgement callback with
-  // `{ ok: true, ... }` or `{ ok: false, error: '<code>' }`. Register the
-  // server → client events (`call:incoming`, `call:accepted`, `call:taken`,
-  // `call:ended`, and the `call:offer`/`call:answer`/`call:ice` relays) with
-  // [on].
+  // Media runs through LiveKit (an SFU), not peer-to-peer WebRTC — so this
+  // socket now only handles *ringing*. The old `call:offer`/`call:answer`/
+  // `call:ice` relay events were removed; after accepting or starting a call,
+  // fetch a room token via `POST /calls/:id/token` (see [CallsService.token])
+  // and connect to LiveKit directly. Client → server events take an
+  // acknowledgement callback with `{ ok: true, ... }` or
+  // `{ ok: false, error: '<code>' }`. Register the server → client events
+  // (`call:incoming`, `call:accepted`, `call:taken`, `call:ended`) with [on].
+  //
+  // Calling is feature-flagged off unless the server has `CALLS_ENABLED=true`
+  // and LiveKit configured — these emits are no-ops otherwise.
 
-  /// `call:invite` — start ringing [calleeId]. Ack:
+  /// `call:invite` — start ringing [calleeId] (1:1). Ack:
   /// `{ ok, callId, status: 'ringing' | 'missed' }` or `{ ok: false, error }`
   /// (`not_allowed`, `invalid_callee`, `no_such_user`, `busy`, `failed`).
   void callInvite(String calleeId, {void Function(dynamic ack)? ack}) =>
       _socket?.emitWithAck('call:invite', {'calleeId': calleeId}, ack: ack);
 
-  /// `call:accept` — callee accepts. Ack `{ ok: false, error: 'too_late' }` if
-  /// another of the callee's own tabs already answered.
+  /// `call:accept` — callee accepts a 1:1 ring. Ack
+  /// `{ ok: false, error: 'too_late' }` if another of the callee's own tabs
+  /// already answered. After accepting, call `POST /calls/:id/token` to join.
   void callAccept(String callId, {void Function(dynamic ack)? ack}) =>
       _socket?.emitWithAck('call:accept', {'callId': callId}, ack: ack);
 
-  /// `call:decline` — callee declines the ringing call.
+  /// `call:group-start` — start (or rejoin + re-ring) a group call for
+  /// [groupId]. Requires active membership. Ack
+  /// `{ ok, callId, joined, invited? }` or `{ ok: false, error }`
+  /// (`not_allowed`, `invalid_group`, `not_a_member`, `busy`, `failed`). Group
+  /// calls have no ring timeout. Join via `POST /calls/:id/token` afterwards.
+  void callGroupStart(String groupId, {void Function(dynamic ack)? ack}) =>
+      _socket?.emitWithAck('call:group-start', {'groupId': groupId}, ack: ack);
+
+  /// `call:group-join` — join a group call already in progress for [groupId]
+  /// without a fresh invite. Ack `{ ok, callId }` or
+  /// `{ ok: false, error: 'not_a_member' | 'no_call' | 'failed' }`.
+  void callGroupJoin(String groupId, {void Function(dynamic ack)? ack}) =>
+      _socket?.emitWithAck('call:group-join', {'groupId': groupId}, ack: ack);
+
+  /// `call:decline` — decline a ringing 1:1 call, or (on a group call) dismiss
+  /// only your own invitation without ending it for anyone else.
   void callDecline(String callId, {void Function(dynamic ack)? ack}) =>
       _socket?.emitWithAck('call:decline', {'callId': callId}, ack: ack);
 
-  /// `call:end` — either party hangs up an active or ringing call.
+  /// `call:end` — hang up a 1:1 call (either party), or (on a group call) leave
+  /// it. A group room only closes once LiveKit reports it empty.
   void callEnd(String callId, {void Function(dynamic ack)? ack}) =>
       _socket?.emitWithAck('call:end', {'callId': callId}, ack: ack);
-
-  /// `call:offer` / `call:answer` / `call:ice` — pure WebRTC relays; the server
-  /// only verifies the sender is on the call before forwarding [payload]
-  /// (`{ callId, ...sdpOrCandidate }`) to the other side.
-  void callSignal(String event, Map<String, dynamic> payload,
-          {void Function(dynamic ack)? ack}) =>
-      _socket?.emitWithAck(event, payload, ack: ack);
 
   /// Tears down the connection. Call on sign-out; reconnect with fresh auth via
   /// [connect] afterwards.

@@ -10,6 +10,7 @@ import '../api/api.dart';
 import '../api/session.dart';
 import '../data/mappers.dart';
 import '../data/seed.dart';
+import '../calls/call_controller.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
@@ -1579,10 +1580,49 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
-  void _startCall() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Calling ${widget.group.name}…')),
-    );
+  Future<void> _startCall() async {
+    final g = widget.group;
+    if (CallController.instance.isBusy) return;
+    if (!g.isDirect) {
+      // Group call: rings every other active member.
+      CallController.instance.startGroup(g);
+      return;
+    }
+    // Direct thread: ring the other person. Resolve them from the loaded roster,
+    // falling back to a fetch if members haven't loaded yet.
+    final peer = await _directPeer();
+    if (!mounted) return;
+    if (peer == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't find who to call.")),
+      );
+      return;
+    }
+    CallController.instance.startDirect(peer);
+  }
+
+  /// The other member of a direct thread (whoever isn't the current user).
+  Future<Person?> _directPeer() async {
+    final myId = AppSession.instance.me.id;
+    Person? pick(List<Person> people) {
+      for (final p in people) {
+        if (p.id.isNotEmpty && p.id != myId) return p;
+      }
+      return null;
+    }
+
+    final fromRoster = pick(_members);
+    if (fromRoster != null) return fromRoster;
+    try {
+      final raw = await Api.instance.groups.members(widget.group.id);
+      final people = raw.map((e) {
+        final map = asMap(e);
+        return personFromJson(map['user'] ?? map['member'] ?? e);
+      }).toList();
+      return pick(people);
+    } catch (_) {
+      return null;
+    }
   }
 
   void _openSharedContent() {

@@ -52,6 +52,10 @@ dependencies:
   image_picker: ^1.1.2
   url_launcher: ^6.3.2
   file_picker: 10.3.10
+  # Voice/video calling media over LiveKit (WebRTC SFU). See lib/calls/.
+  livekit_client: ^2.4.0
+  # Runtime mic/camera permission prompts on Android/iOS for calls.
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:

@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'api/api.dart';
 import 'api/session.dart';
+import 'calls/call_controller.dart';
 import 'screens/chats_screen.dart';
 import 'screens/explore_screen.dart';
 import 'screens/home_screen.dart';
@@ -34,6 +35,10 @@ Future<void> main() async {
   runApp(const ArdentCommunityApp());
 }
 
+/// Root navigator key, so app-wide coordinators (e.g. [CallController]) can show
+/// full-screen UI from outside any particular screen's context.
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
 class ArdentCommunityApp extends StatelessWidget {
   const ArdentCommunityApp({super.key});
 
@@ -42,6 +47,7 @@ class ArdentCommunityApp extends StatelessWidget {
     return MaterialApp(
       title: 'Ardent',
       debugShowCheckedModeBanner: false,
+      navigatorKey: rootNavigatorKey,
       theme: ArdentTheme.light(),
       // Clamp the OS text-scale so an aggressive accessibility font size can't
       // break layouts on any device, while still honouring smaller/larger
@@ -157,6 +163,8 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     AppSession.instance.refreshUnreadNotifications();
+    // Start listening for incoming calls for the whole authenticated session.
+    CallController.instance.init(rootNavigatorKey);
   }
 
   void _goTab(int i) => setState(() {
