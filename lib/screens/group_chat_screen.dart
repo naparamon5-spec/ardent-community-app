@@ -545,41 +545,46 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Call',
-            icon: const Icon(Icons.call_rounded),
-            onPressed: _startCall,
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'More',
-            icon: const Icon(Icons.more_vert_rounded),
-            onSelected: (value) {
-              if (value == 'members') {
-                _openMembers();
-              } else if (value == 'shared') {
-                _openSharedContent();
-              }
-            },
-            itemBuilder: (context) => [
-              if (!g.isDirect)
+          // Call and the overflow menu only make sense once you're in the
+          // group; hide them until the user has joined (direct threads are
+          // always "joined").
+          if (_joined) ...[
+            IconButton(
+              tooltip: 'Call',
+              icon: const Icon(Icons.call_rounded),
+              onPressed: _startCall,
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert_rounded),
+              onSelected: (value) {
+                if (value == 'members') {
+                  _openMembers();
+                } else if (value == 'shared') {
+                  _openSharedContent();
+                }
+              },
+              itemBuilder: (context) => [
+                if (!g.isDirect)
+                  const PopupMenuItem(
+                    value: 'members',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.group_rounded),
+                      title: Text('Members'),
+                    ),
+                  ),
                 const PopupMenuItem(
-                  value: 'members',
+                  value: 'shared',
                   child: ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.group_rounded),
-                    title: Text('Members'),
+                    leading: Icon(Icons.folder_shared_rounded),
+                    title: Text('Shared content'),
                   ),
                 ),
-              const PopupMenuItem(
-                value: 'shared',
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.folder_shared_rounded),
-                  title: Text('Shared content'),
-                ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
       body: Column(
