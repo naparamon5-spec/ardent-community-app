@@ -80,6 +80,9 @@
 	<string>Allow access to your camera for video calls and to add photos or videos to your story.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow access to your microphone for voice and video calls and to record story videos.</string>
+	<!-- Required because the calling/WebRTC SDK references location APIs. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Allow access to your location to improve connectivity during voice and video calls.</string>
 	<!-- Screen sharing in calls: the App Group the app + Broadcast Upload
 	     Extension share, and the extension's bundle id. Keep these in sync with
 	     the App Group capability and the extension target in Xcode
