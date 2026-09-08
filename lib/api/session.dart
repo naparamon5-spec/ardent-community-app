@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../calls/callkit_service.dart';
 import '../data/mappers.dart';
 import '../data/seed.dart';
 import '../services/app_badge.dart';
@@ -108,6 +109,7 @@ class AppSession extends ChangeNotifier {
     _me = null;
     _unreadNotifications = 0;
     AppBadge.clear();
+    CallKitService.instance.endAll();
     Api.instance.realtime.disconnect();
     await Api.instance.auth.logout();
     notifyListeners();

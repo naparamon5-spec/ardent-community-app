@@ -12,6 +12,7 @@ import '../data/seed.dart';
 import '../theme/ardent_colors.dart';
 import '../screens/call_screen.dart';
 import '../screens/mini_call_bar.dart';
+import 'callkit_service.dart';
 
 /// Where a call is in its lifecycle.
 enum CallPhase { idle, outgoing, incoming, active, ended }
@@ -92,6 +93,54 @@ class CallController extends ChangeNotifier {
     rt.on('call:accepted', _onAccepted);
     rt.on('call:taken', _onTaken);
     rt.on('call:ended', _onEnded);
+
+    // Bridge the native call UI (CallKit / full-screen notification) shown from
+    // a push when the app is backgrounded/killed. Accepting or declining there
+    // routes back into the same join/decline logic.
+    CallKitService.instance
+      ..onAccept = acceptFromPush
+      ..onDecline = declineFromPush
+      ..listen();
+  }
+
+  // ---- Incoming via push (CallKit / notification) ---------------------------
+
+  /// Accept a call that was surfaced by a push through the native call UI. The
+  /// media room is joined purely by [callId] (via `POST /calls/:id/token`), so
+  /// this works even on a cold launch where no socket state exists yet.
+  Future<void> acceptFromPush(String callId, String kind, String groupId) async {
+    // Already tracking this call (push + socket both arrived) → just accept.
+    if (isBusy && this.callId == callId) {
+      accept();
+      return;
+    }
+    _reset();
+    this.callId = callId;
+    this.kind = kind == 'group' ? 'group' : 'direct';
+    _pendingGroupId = groupId;
+    outgoing = false;
+    phase = CallPhase.incoming;
+    if (peerName.isEmpty) peerName = 'Incoming call';
+    _showUi();
+    notifyListeners();
+    // Make sure signaling is up so the caller learns we accepted.
+    try {
+      Api.instance.realtime.connect();
+    } catch (_) {}
+    accept();
+  }
+
+  /// Decline a call surfaced by a push.
+  void declineFromPush(String callId) {
+    if (isBusy && this.callId == callId) {
+      decline();
+      return;
+    }
+    try {
+      Api.instance.realtime.connect();
+      Api.instance.realtime.callDecline(callId);
+    } catch (_) {}
+    CallKitService.instance.endCall(callId);
   }
 
   // ---- Outgoing --------------------------------------------------------------
@@ -610,6 +659,8 @@ class CallController extends ChangeNotifier {
   }
 
   void _end() {
+    // Dismiss any native call UI (CallKit / full-screen notification) for it.
+    if (callId.isNotEmpty) CallKitService.instance.endCall(callId);
     _teardownMedia();
     _removeMiniBar();
     if (Platform.isAndroid && screenShareEnabled) {

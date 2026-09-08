@@ -6,7 +6,25 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../api/api.dart';
+import '../calls/callkit_service.dart';
 import '../utils/device_info_util.dart';
+
+/// True when a push is a call invite the app should ring for.
+bool _isCallMessage(RemoteMessage m) => m.data['type'] == 'call';
+
+/// Show the native incoming-call UI (CallKit / full-screen notification) from a
+/// call push's data payload. Works from the background isolate on Android.
+Future<void> _showCallFromMessage(RemoteMessage m) async {
+  await CallKitService.instance.showIncoming(
+    callId: '${m.data['callId'] ?? ''}',
+    callerName:
+        '${m.data['callerName'] ?? m.data['caller'] ?? 'Incoming call'}',
+    avatarUrl: '${m.data['avatarUrl'] ?? ''}',
+    kind: '${m.data['kind'] ?? 'direct'}',
+    groupId: '${m.data['groupId'] ?? ''}',
+    isVideo: '${m.data['video'] ?? ''}' == 'true',
+  );
+}
 
 /// Android channel used to display foreground/data push notifications. Its id
 /// must match the `channel_id` the backend sets in the FCM `android` block.
@@ -33,6 +51,13 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   // The isolate is fresh, so Firebase must be initialised here too.
   await Firebase.initializeApp();
   debugPrint('[Push] background message: ${message.messageId}');
+  // A call invite → ring with the native call UI even when killed/locked.
+  // (On iOS this path is handled natively by PushKit/VoIP; here it covers
+  // Android's high-priority data message waking this background isolate.)
+  if (_isCallMessage(message)) {
+    await _showCallFromMessage(message);
+    return;
+  }
   // Android: a data-only message won't be auto-displayed by the system, so show
   // it ourselves. (A message carrying a `notification` block is displayed by the
   // OS while backgrounded, so we skip it here to avoid a duplicate.) On iOS,
@@ -153,6 +178,9 @@ class PushService {
     // Foreground messages (app open and visible).
     FirebaseMessaging.onMessage.listen((message) async {
       debugPrint('[Push] foreground message: ${message.notification?.title}');
+      // A call invite while the app is open is handled by the in-app call UI
+      // (the realtime socket delivers `call:incoming`); don't also ring CallKit.
+      if (_isCallMessage(message)) return;
       // iOS presents the alert itself (setForegroundNotificationPresentationOptions);
       // on Android we must display it manually.
       if (!Platform.isIOS) {
@@ -209,6 +237,14 @@ class PushService {
       debugPrint('[Push] token registered for $userId');
 
       _hookRefresh();
+      // iOS: re-register when the VoIP (PushKit) token arrives or changes, so
+      // the backend can send VoIP call pushes.
+      if (Platform.isIOS) {
+        CallKitService.instance.onVoipToken = (_) {
+          final uid = _lastUserId;
+          if (uid != null && uid.isNotEmpty) registerToken(uid);
+        };
+      }
       return true;
     } catch (e) {
       debugPrint('[Push] registerToken failed: $e');
@@ -240,17 +276,23 @@ class PushService {
     }
   }
 
-  /// Builds the backend payload — identical shape to the eforward app so both
-  /// apps share one backend contract (docs/FCM_PUSH_NOTIFICATIONS.md).
+  /// Builds the backend payload — matches the eforward app, plus an optional
+  /// iOS `voip_token` the backend uses to send VoIP (PushKit) call pushes so
+  /// calls ring when the app is killed/locked. See docs/FCM_PUSH_NOTIFICATIONS.md.
   Future<Map<String, dynamic>> _payload(String userId, String token) async {
     final device = await DeviceInfoUtil.current();
-    return {
+    final payload = <String, dynamic>{
       'employee_id': userId,
       'fcm_token': token,
       'device_id': device['deviceId'],
       'device_model': device['deviceModel'],
       'platform': Platform.isIOS ? 'ios' : 'android',
     };
+    if (Platform.isIOS) {
+      final voip = await CallKitService.instance.getVoipToken();
+      if (voip != null) payload['voip_token'] = voip;
+    }
+    return payload;
   }
 
   /// Re-register automatically when Google rotates the token.

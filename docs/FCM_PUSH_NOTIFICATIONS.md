@@ -1,239 +1,268 @@
-# FCM Push Notifications — Backend & Client Contract
+# Push Notifications & Calls — Complete Guide (Frontend + Backend, iOS & Android)
 
-This document defines how the **Ardent Community** app registers device push
-tokens with the backend and how the backend delivers push notifications. It is
-intentionally **identical to the eforward app** so a single backend
-implementation/pattern can serve both apps.
+Everything needed for push notifications **and incoming-call ringing** in the
+**Ardent Community** app on **both iOS and Android**: device-token registration,
+the backend API contract, service-account credentials for sending, notification
+sending, and the **call push** contract that makes calls ring when the app is
+backgrounded, killed, or the phone is locked. Token registration mirrors the
+**eforward app**, so one backend serves both apps (same Firebase project).
 
-- **One Firebase project** (`ardent-community`) with **two apps registered**:
-  iOS (`com.ardentnetworks.community`) and Android
+- **One Firebase project** (`ardent-community`), two apps: iOS
+  (`com.ardentnetworks.community`) and Android
   (`com.ardentnetworks.ardent_community`).
-- **FCM (Firebase Cloud Messaging)** is the single send path for **both**
-  platforms. On iOS, FCM relays to **APNs**; on Android it delivers directly.
-- The backend stores one row **per device** (multi-device per user) and sends
-  to every stored token for a target user.
+- **FCM** delivers normal notifications to both platforms (iOS via APNs).
+- **Calls** ring via the native call UI (iOS **CallKit** + **PushKit/VoIP**;
+  Android full-screen incoming notification woken by a high-priority FCM **data**
+  message). See §9.
+
+### Credential map
+
+| Credential | Purpose | Where it lives |
+|-----------|---------|----------------|
+| `GoogleService-Info.plist` / `google-services.json` | client config (app **receives**) | in the app ✅ |
+| APNs `.p8` key (`22W6PB9G79`) | lets FCM reach Apple **and** signs VoIP pushes | uploaded to Firebase ✅; backend uses it for VoIP (§9) |
+| Service account (`FCM_PROJECT_ID`/`FCM_CLIENT_EMAIL`/`FCM_PRIVATE_KEY`) | backend **sends** FCM | backend `.env` (§6) |
 
 ---
 
-## 1. Backend API contract
+## 1. Token registration API
 
-Two endpoints, matching eforward exactly. Both require the authenticated user's
-bearer token.
+Both endpoints require the user's bearer token.
 
-### Register / upsert a device token
-
-```
-POST {API_BASE_URL}/users/fcm-token
-```
-
-**Headers**
+**Register / upsert:** `POST {API_BASE_URL}/users/fcm-token`
 
 ```
 Authorization: Bearer <access_token>
 Content-Type: application/json
-Accept: application/json
 ```
-
-**Body**
-
 ```json
 {
   "employee_id": "<user id>",
   "fcm_token":   "<FCM registration token>",
   "device_id":   "<stable per-device id>",
   "device_model":"<human-readable model>",
-  "platform":    "ios" | "android"
+  "platform":    "ios" | "android",
+  "voip_token":  "<iOS PushKit VoIP token — iOS only, optional>"
 }
 ```
+`2xx` = saved. The `voip_token` is present only on iOS and only once the VoIP
+token is available; the backend needs it to send call pushes to iPhones (§9).
 
-**Success:** any `2xx`. The client treats `200–299` as saved; anything else as
-failed (and logs the status + body).
+**Remove (logout):** `DELETE {API_BASE_URL}/users/fcm-token` — same body; delete
+the row matching `employee_id` **and** `fcm_token`.
 
-> **Field naming:** the field is called `employee_id` to stay byte-for-byte
-> compatible with the eforward backend. In Ardent Community it carries the app
-> user's id (`AppSession.instance.me.id`). Keep the JSON key `employee_id` so
-> both apps hit the same schema; map it to your users table as appropriate.
-
-### Remove the current device token (on logout)
-
-```
-DELETE {API_BASE_URL}/users/fcm-token
-```
-
-Same headers and **same body** as register. The backend deletes only the row
-matching **`employee_id` AND `fcm_token`** (so other devices of the same user
-keep working).
+> The JSON key is `employee_id` to stay byte-compatible with eforward; it carries
+> Ardent's user id (`AppSession.instance.me.id`).
 
 ---
 
-## 2. Suggested SQL schema
-
-Multi-device: the primary key is the token (a token is globally unique to one
-device install), and a user may own many.
+## 2. SQL schema
 
 ```sql
 CREATE TABLE user_fcm_tokens (
-  fcm_token     VARCHAR(255) NOT NULL,        -- PK: unique per device install
-  employee_id   VARCHAR(64)  NOT NULL,        -- the app user id
-  device_id     VARCHAR(128),                 -- identifierForVendor / Android id
+  fcm_token     VARCHAR(255) NOT NULL,
+  employee_id   VARCHAR(64)  NOT NULL,
+  device_id     VARCHAR(128),
   device_model  VARCHAR(128),
-  platform      VARCHAR(16)  NOT NULL,        -- 'ios' | 'android'
+  platform      VARCHAR(16)  NOT NULL,       -- 'ios' | 'android'
+  voip_token    VARCHAR(255),                -- iOS PushKit token (nullable)
   updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (fcm_token),
   INDEX idx_employee (employee_id)
 );
 ```
-
-- **Register** = `INSERT ... ON DUPLICATE KEY UPDATE` (upsert on `fcm_token`),
-  refreshing `employee_id`, `device_model`, `platform`, `updated_at`. This
-  correctly re-assigns a token if the same device is used by a new account.
-- **Delete** = `DELETE WHERE employee_id = ? AND fcm_token = ?`.
-- Prune tokens FCM reports as unregistered/invalid when you send (see §6).
+- Register = upsert on `fcm_token`. Delete = by `employee_id` + `fcm_token`.
+- Prune tokens FCM reports invalid when sending (§7).
 
 ---
 
 ## 3. Client registration flow (mirrors eforward)
 
-The client calls **register** whenever it has a valid session, and **remove** on
-logout.
-
-| Moment | Call |
-|--------|------|
-| After login succeeds | `registerToken(userId)` |
-| After OTP / re-auth | `registerToken(userId)` |
-| App resume (foreground) with a live session | `registerToken(userId)` |
-| Dashboard/home load | `registerToken(userId)` |
-| FCM token refresh (`onTokenRefresh`) | `registerToken(userId)` |
-| Logout | `removeToken(userId)` |
-
-Registration is **idempotent** (upsert), so calling it on every resume is safe
-and self-healing.
-
-**On logout**, the client both (a) tells the backend to delete the row, and
-(b) calls `FirebaseMessaging.instance.deleteToken()` so the device stops
-receiving pushes even if the network delete failed. A fresh token is generated
-after the next login re-registers.
+Register on login, OTP, app-resume, and cold-start auto-login; remove on logout.
+Idempotent (upsert), and re-registers automatically on FCM/VoIP token refresh.
+On logout the client also deletes the token locally so a logged-out device stops
+receiving pushes. **Already wired** in this app (AuthGate + `signOut`).
 
 ---
 
-## 4. Device info fields
-
-Collected via `device_info_plus` (same as eforward):
+## 4. Device fields (`device_info_plus`)
 
 | Platform | `device_id` | `device_model` |
 |----------|-------------|----------------|
 | Android | `androidInfo.id` | `"<brand> <model>"` |
-| iOS | `iosInfo.identifierForVendor` (`"unknown"` if null) | `iosInfo.utsname.machine` |
+| iOS | `iosInfo.identifierForVendor` | `iosInfo.utsname.machine` |
 
 ---
 
-## 5. Ardent Community integration points
+## 5. Frontend integration points (already implemented)
 
-Where the values come from **in this app** (they differ from eforward's classes,
-but the payload sent to the backend is identical):
-
-| Value | Source in this repo |
-|-------|---------------------|
-| Base URL | `ApiConfig.baseUrl` — already includes the `/api` prefix (`lib/api/api_config.dart`) |
+| Concern | Source |
+|---------|--------|
+| Base URL | `ApiConfig.baseUrl` (`lib/api/api_config.dart`) |
 | Access token | `AuthStore.instance.token` (`lib/api/auth_store.dart`) |
-| User id (`employee_id`) | `AppSession.instance.me.id` (`lib/api/session.dart`) |
-| FCM token / refresh | `PushService` (`lib/services/push_service.dart`) |
+| User id | `AppSession.instance.me.id` (`lib/api/session.dart`) |
+| Token register/remove | `PushService` (`lib/services/push_service.dart`) |
+| Notification display + badge | `PushService`, `AppBadge` (`lib/services/app_badge.dart`) |
+| Incoming-call UI | `CallKitService` (`lib/calls/callkit_service.dart`), `CallController` |
 
-`PushService` already fetches the token and exposes an `onToken` hook. Wire it to
-POST the payload above, e.g. in `main.dart`:
+---
 
-```dart
-PushService.instance.onToken = (token) async {
-  final userId = AppSession.instance.me.id;
-  if (userId.isEmpty) return;                    // not logged in yet
-  final device = await DeviceInfoUtil.current(); // add device_info_plus
-  await Api.instance /* or a raw http.post */ .post(
-    '/users/fcm-token',
-    body: {
-      'employee_id':  userId,
-      'fcm_token':    token,
-      'device_id':    device['deviceId'],
-      'device_model': device['deviceModel'],
-      'platform':     Platform.isIOS ? 'ios' : 'android',
-    },
-  );
-};
+## 6. Backend service-account credentials (backend sends FCM)
+
+```env
+FCM_PROJECT_ID=ardent-community
+FCM_CLIENT_EMAIL=<client_email from the service-account JSON>
+FCM_PRIVATE_KEY=<private_key from the service-account JSON>
 ```
 
-> To match eforward 1:1, add the `device_info_plus` package and a
-> `DeviceInfoUtil.current()` helper returning `{deviceId, deviceModel}` (see §4).
-> Also call the register/remove hooks at the login/logout/resume points in §3.
+Get the JSON: Firebase Console → project **ardent-community** → ⚙️ **Project
+settings** → **Service accounts** → **Generate new private key**. Map
+`project_id`/`client_email`/`private_key` to the vars above. Keep it in secrets,
+never in git or the app.
+
+⚠️ **Newline gotcha:** the private key has real newlines; store them escaped as
+`\n` and restore in code:
+```js
+const privateKey = process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n');
+```
 
 ---
 
-## 6. Sending a push from the backend (FCM HTTP v1)
+## 7. Sending a normal notification (backend)
 
-Send to each stored `fcm_token` for the target user. Use the Firebase Admin SDK
-or the HTTP v1 API with a service-account token.
+```js
+const admin = require('firebase-admin');
+admin.initializeApp({
+  credential: admin.credential.cert({
+    projectId: process.env.FCM_PROJECT_ID,
+    clientEmail: process.env.FCM_CLIENT_EMAIL,
+    privateKey: process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  }),
+});
 
-```json
-POST https://fcm.googleapis.com/v1/projects/ardent-community/messages:send
-Authorization: Bearer <OAuth2 access token from service account>
-Content-Type: application/json
-
-{
-  "message": {
-    "token": "<the device fcm_token>",
-    "notification": { "title": "New message", "body": "You have an update" },
-    "data": { "type": "chat", "groupId": "123" },
-    "apns": {
-      "payload": { "aps": { "sound": "default", "badge": 1 } }
-    },
-    "android": {
-      "priority": "high",
-      "notification": { "channel_id": "ardent_default" }
-    }
+async function sendPush(fcmToken, title, body, data = {}) {
+  try {
+    await admin.messaging().send({
+      token: fcmToken,
+      notification: { title, body },
+      data,                                    // string values only
+      apns: { payload: { aps: { sound: 'default', badge: 1 } } },
+      android: { priority: 'high', notification: { channelId: 'ardent_default' } },
+    });
+  } catch (err) {
+    if (['messaging/registration-token-not-registered',
+         'messaging/invalid-argument'].includes(err.code)) {
+      await db.query('DELETE FROM user_fcm_tokens WHERE fcm_token = ?', [fcmToken]);
+    } else { throw err; }
   }
 }
 ```
-
-- **iOS** requires the APNs auth key uploaded to Firebase (already done: key
-  `22W6PB9G79`, Team `K9973Z86YT`). The app's `aps-environment` is `production`
-  in release builds, so TestFlight/App Store builds receive production pushes.
-- **Android** should specify a `channel_id` that the app has created.
-- If FCM returns `UNREGISTERED` / `INVALID_ARGUMENT` for a token, **delete that
-  row** — the install is gone.
+- Android channel id is **`ardent_default`** (the app creates it).
+- `apns.payload.aps.badge` sets the iOS icon badge; the app also syncs the badge
+  to its unread count on its own.
 
 ---
 
-## 7. Platform display notes (important, from eforward)
+## 8. Platform display notes
 
-- **iOS:** Firebase is the sole `UNUserNotificationCenterDelegate` and displays
-  notifications natively. **Do NOT initialize `flutter_local_notifications` on
-  iOS** — its `initialize()` replaces Firebase's delegate and silently breaks all
-  iOS notifications. Foreground presentation is enabled via
-  `setForegroundNotificationPresentationOptions` (already set in `PushService`).
-- **Android:** create a high-importance `AndroidNotificationChannel` and use
-  `flutter_local_notifications` to display messages while the app is in the
-  foreground/background isolate. The top-level
-  `@pragma('vm:entry-point')` background handler must initialize that plugin in
-  its own isolate before calling `show()`.
+- **iOS:** Firebase is the sole notification delegate and displays alerts
+  natively. The app does **not** init `flutter_local_notifications` on iOS
+  (doing so breaks Firebase's delegate). Foreground alerts are enabled in
+  `PushService`.
+- **Android:** the app shows foreground/data notifications via
+  `flutter_local_notifications` on channel `ardent_default`.
 
 ---
 
-## 8. Required config recap
+## 9. Incoming calls when killed / locked (the important part)
+
+Normal FCM notifications can't ring a call on a killed/locked device. Two
+mechanisms are used, and the **backend must send a call push on call start** (in
+addition to the existing Socket.IO signaling, which only reaches an app that's
+already open).
+
+### Common call payload fields
+| Field | Meaning |
+|-------|---------|
+| `callId` | the call's id (used to fetch the LiveKit token + signal accept/decline) |
+| `callerName` | shown on the call screen |
+| `kind` | `direct` or `group` |
+| `groupId` | for group calls |
+| `video` | `"true"` for a video call (optional) |
+
+### Android — high-priority FCM **data** message
+Send a **data-only** message (no `notification` block) at **high** priority to
+each Android `fcm_token`. The app's background handler wakes and shows the
+full-screen incoming-call UI.
+
+```js
+await admin.messaging().send({
+  token: androidFcmToken,
+  android: { priority: 'high' },
+  data: {
+    type: 'call',
+    callId, callerName, kind, groupId,
+    video: isVideo ? 'true' : 'false',
+  },
+});
+```
+
+### iOS — **VoIP push** via PushKit (uses the same `.p8` key)
+iOS requires a **VoIP push** to ring a killed app. Send it over APNs to the
+device's **`voip_token`** (registered in §1), token-authed with the same APNs
+key `22W6PB9G79` / Team `K9973Z86YT`:
+
+```
+POST https://api.push.apple.com/3/device/<voip_token>      (or api.sandbox... for dev)
+authorization: bearer <JWT signed with the .p8 key (kid=22W6PB9G79, iss=K9973Z86YT)>
+apns-topic: com.ardentnetworks.community.voip
+apns-push-type: voip
+apns-priority: 10
+
+{ "callId": "...", "callerName": "...", "kind": "direct", "groupId": "", "video": "false" }
+```
+- `apns-topic` **must** be the bundle id + `.voip`.
+- The native app reports it to CallKit immediately (Apple requirement).
+
+### What the app already does
+- Shows the native call UI from the push (CallKit on iOS via the AppDelegate
+  PushKit handler; full-screen notification on Android via the FCM background
+  handler).
+- **Accept** → joins the LiveKit room by `callId` (`POST /calls/:id/token`) and
+  signals `callAccept`/`callGroupJoin` — works even from a cold launch.
+- **Decline / timeout** → signals `callDecline` to the backend.
+- Registers/refreshes the iOS `voip_token` and sends it in the token payload.
+
+### Backend checklist for calls
+1. On call start, in addition to socket signaling, **send a call push** to each
+   of the callee's devices: VoIP push for iOS rows, high-priority data FCM for
+   Android rows.
+2. Keep handling `callAccept` / `callGroupJoin` / `callDecline` / `callEnd` from
+   the socket as today — the app calls them after the user acts on the call UI.
+3. If the call is answered elsewhere or cancelled, emit `call:taken` / `call:ended`
+   so the app dismisses the native call UI on other devices.
+
+---
+
+## 10. Status recap
 
 | Item | Status |
 |------|--------|
-| iOS `GoogleService-Info.plist` in `ios/Runner/` (bundled) | ✅ |
-| Android `google-services.json` in `android/app/` | ✅ |
-| iOS Push Notifications capability + `aps-environment` entitlement | ✅ |
-| Android google-services Gradle plugin | ✅ |
-| APNs `.p8` key uploaded to Firebase (`22W6PB9G79` / `K9973Z86YT`) | ✅ |
-| Backend `POST`/`DELETE /users/fcm-token` implemented | ⬜ backend team |
-| Client `onToken` wired to the backend + register/remove call sites | ⬜ see §5 |
+| iOS/Android Firebase config + entitlements + APNs key | ✅ |
+| Token register/remove (both platforms) | ✅ |
+| App-icon badge synced to unread count | ✅ |
+| Android foreground notification display | ✅ |
+| Incoming-call UI (CallKit + PushKit / Android full-screen) | ✅ app side |
+| Backend `POST`/`DELETE /users/fcm-token` (+ `voip_token`) | ⬜ backend |
+| Backend service account + notification sending (§6–7) | ⬜ backend |
+| Backend **call push** on call start (§9) | ⬜ backend |
 
 ---
 
-### TL;DR for the backend team
-Implement **`POST /users/fcm-token`** and **`DELETE /users/fcm-token`** exactly
-as eforward: bearer-authed, JSON body `{employee_id, fcm_token, device_id,
-device_model, platform}`, multi-device rows keyed by `fcm_token`. Send via FCM
-to every token for a user. This is the **same contract for both iOS and
-Android** — the only per-platform difference is the `platform` field value and
-the display notes in §7.
+### TL;DR for the backend
+1. Implement `POST`/`DELETE /users/fcm-token` (§1), storing `voip_token` too.
+2. Put the service-account creds in `.env` (§6) and send notifications via the
+   Admin SDK (§7).
+3. **On call start, send a call push** (§9): VoIP push to iOS `voip_token`s,
+   high-priority `type:'call'` data FCM to Android `fcm_token`s. Same socket
+   accept/decline handlers as today.
