@@ -1,4 +1,4 @@
-package com.example.ardent_community
+package com.ardentnetworks.ardent_community
 
 import io.flutter.embedding.android.FlutterActivity
 

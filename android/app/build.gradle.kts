@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.ardent_community"
+    namespace = "com.ardentnetworks.ardent_community"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,8 +20,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.ardent_community"
+        applicationId = "com.ardentnetworks.ardent_community"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // LiveKit/flutter_webrtc requires API 23+ for calling; keep the higher
