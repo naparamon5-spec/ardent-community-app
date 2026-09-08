@@ -108,7 +108,11 @@ class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  // Resolved lazily via a getter, NOT an eager field initializer: touching
+  // `FirebaseMessaging.instance` before `Firebase.initializeApp()` throws
+  // `No Firebase App '[DEFAULT]'`. Since `PushService.instance` is accessed in
+  // main() before init() runs, an eager field would crash at construction.
+  FirebaseMessaging get _messaging => FirebaseMessaging.instance;
 
   bool _initialised = false;
   String? _fcmToken;
