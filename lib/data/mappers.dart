@@ -730,6 +730,101 @@ class NotificationItem {
           .contains(entityType);
 }
 
+/// Builds a [CallRecord] from a `GET /calls` history row. Tolerant of field
+/// naming: a direct row names the other party in `peer`/`otherUser`/`user`, a
+/// group row carries `group`/`participants`; `direction` is relative to the
+/// current user, `status` is `answered`/`missed`/`declined` (also mapping
+/// `completed`→answered, `rejected`→declined, `no_answer`/`unanswered`→missed).
+CallRecord callFromJson(dynamic value) {
+  final json = asMap(value);
+  final kind = _str(_pick(json, ['type', 'kind', 'callType'])).toLowerCase();
+  final group = _pick(json, ['group', 'thread']);
+  final isGroup = kind == 'group' || group is Map;
+
+  // Direction relative to the viewer.
+  var direction =
+      _str(_pick(json, ['direction', 'callDirection'])).toLowerCase();
+  if (direction.isEmpty) {
+    final outgoing = _pick(json, ['outgoing', 'isOutgoing', 'mine']);
+    if (outgoing != null) direction = _bool(outgoing) ? 'outgoing' : 'incoming';
+  }
+  if (direction != 'incoming' && direction != 'outgoing') direction = 'outgoing';
+
+  // Normalise status to answered / missed / declined.
+  var status = _str(_pick(json, ['status', 'outcome', 'state'])).toLowerCase();
+  switch (status) {
+    case 'completed':
+    case 'ended':
+    case 'connected':
+      status = 'answered';
+    case 'rejected':
+      status = 'declined';
+    case 'no_answer':
+    case 'unanswered':
+    case 'no-answer':
+      status = 'missed';
+  }
+  final started = _parseDate(_pick(json, ['startedAt', 'createdAt', 'time']));
+  final ended = _parseDate(_pick(json, ['endedAt', 'finishedAt']));
+
+  // Duration in seconds: explicit field first, then ms, then start→end.
+  var duration = _int(_pick(json, ['duration', 'durationSeconds', 'seconds']));
+  if (duration == 0) {
+    final ms = _int(_pick(json, ['durationMs', 'durationMillis']));
+    if (ms > 0) duration = (ms / 1000).round();
+  }
+  if (duration == 0 && started != null && ended != null) {
+    final d = ended.difference(started).inSeconds;
+    if (d > 0) duration = d;
+  }
+
+  if (status != 'missed' && status != 'declined' && status != 'answered') {
+    // Status field absent/unknown — infer from talk time (best effort).
+    status = duration > 0 ? 'answered' : 'missed';
+  }
+
+  final video = _bool(_pick(json, ['video', 'isVideo'])) ||
+      _str(_pick(json, ['media', 'mode'])).toLowerCase() == 'video';
+
+  // Participants for a group row.
+  final participants = asList(_pick(json, ['participants', 'members']));
+  final joined = participants.isNotEmpty
+      ? participants.length
+      : _int(_pick(json, ['participantCount', 'joinedCount', 'joined']));
+
+  Person peer;
+  var groupName = '';
+  if (isGroup) {
+    final g = asMap(group);
+    groupName = _str(_pick(g, ['name', 'title']));
+    peer = Person(
+      id: _str(_pick(g, ['id', '_id'])),
+      name: groupName.isNotEmpty ? groupName : 'Group call',
+      initials: initialsFrom(groupName.isNotEmpty ? groupName : 'Group'),
+      role: '',
+      color: parseColor(_pick(g, ['color'])) ??
+          avatarColorFor(_str(_pick(g, ['id', '_id']), groupName)),
+    );
+  } else {
+    peer = personFromJson(
+        _pick(json, ['peer', 'otherUser', 'otherParty', 'with', 'user', 'callee', 'caller']));
+  }
+
+  return CallRecord(
+    id: _str(_pick(json, ['id', '_id', 'callId'])),
+    isGroup: isGroup,
+    peer: peer,
+    groupName: groupName,
+    direction: direction,
+    status: status,
+    video: video,
+    startedAt: started,
+    timeLabel: relativeTime(_pick(json, ['startedAt', 'createdAt', 'time'])),
+    durationSeconds: duration,
+    participantsJoined: joined,
+  );
+}
+
 /// Extracts a plain id string from a value that is either a bare id or an
 /// object carrying `id`/`_id`/`slug`.
 String _idFrom(dynamic v) {

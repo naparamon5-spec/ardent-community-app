@@ -6,6 +6,7 @@ import '../data/mappers.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
+import 'calls_screen.dart';
 import 'group_chat_screen.dart';
 import 'post_detail_screen.dart';
 
@@ -75,8 +76,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ));
       case 'group':
         await _openGroupChat(n.entityId);
+      case 'call':
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const CallsScreen(),
+        ));
       default:
-        // Other entity types (event, ethics, booking, call, follow, …) have no
+        // Other entity types (event, ethics, booking, follow, …) have no
         // dedicated push target here yet — the row is simply marked read.
         break;
     }

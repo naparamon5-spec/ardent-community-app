@@ -205,6 +205,58 @@ class PostReactor {
   final String type;
 }
 
+/// A single row in the call history (`GET /calls`) — a 1:1 or group voice/video
+/// call the current user took part in. Mirrors the web Calls page.
+class CallRecord {
+  const CallRecord({
+    required this.id,
+    required this.isGroup,
+    required this.peer,
+    this.groupName = '',
+    this.direction = 'outgoing',
+    this.status = 'answered',
+    this.video = false,
+    this.startedAt,
+    this.timeLabel = '',
+    this.durationSeconds = 0,
+    this.participantsJoined = 0,
+  });
+
+  final String id;
+  final bool isGroup;
+
+  /// The other party (direct) or a synthesized person for the group avatar.
+  final Person peer;
+  final String groupName;
+
+  /// `incoming` | `outgoing`.
+  final String direction;
+
+  /// `answered` | `missed` | `declined`.
+  final String status;
+  final bool video;
+  final DateTime? startedAt;
+
+  /// Pre-formatted relative time (e.g. `19h`), matching the rest of the app.
+  final String timeLabel;
+
+  /// Talk time in seconds (0 when the call was never answered).
+  final int durationSeconds;
+
+  /// Group calls: how many people joined (shown as "N joined").
+  final int participantsJoined;
+
+  bool get isIncoming => direction == 'incoming';
+  bool get isMissed => status == 'missed';
+  bool get isDeclined => status == 'declined';
+  bool get isAnswered => status == 'answered';
+
+  /// Display title — the group name for a group call, else the peer's name.
+  String get title => isGroup
+      ? (groupName.isNotEmpty ? groupName : 'Group call')
+      : peer.name;
+}
+
 class EventItem {
   const EventItem({
     required this.id,

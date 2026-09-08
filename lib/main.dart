@@ -9,6 +9,7 @@ import 'package:livekit_client/livekit_client.dart' show LiveKitClient;
 import 'api/api.dart';
 import 'api/session.dart';
 import 'calls/call_controller.dart';
+import 'screens/calls_screen.dart';
 import 'screens/chats_screen.dart';
 import 'screens/explore_screen.dart';
 import 'screens/home_screen.dart';
@@ -274,6 +275,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   color: ArdentColors.fg2,
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const SearchScreen()),
+                  ),
+                ),
+              // Call history lives alongside Chats.
+              if (_index == 2)
+                IconButton(
+                  icon: const Icon(Icons.call_outlined),
+                  color: ArdentColors.fg2,
+                  tooltip: 'Calls',
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const CallsScreen()),
                   ),
                 ),
               ListenableBuilder(
