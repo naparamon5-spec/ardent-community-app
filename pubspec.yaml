@@ -63,6 +63,9 @@ dependencies:
   permission_handler: ^11.3.1
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0
+  # Pinned to match livekit_client's requirement (>=12.3.0 <14.0.0); a lower
+  # version forces livekit to downgrade and breaks iOS pod resolution.
+  device_info_plus: ^12.3.0
 
 dev_dependencies:
   flutter_test:

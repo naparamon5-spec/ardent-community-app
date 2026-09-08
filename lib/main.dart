@@ -57,10 +57,9 @@ Future<void> main() async {
     }
   }
 
-  // Initialise push notifications (FCM). Safe no-op until the native Firebase
-  // config files are added (GoogleService-Info.plist / google-services.json).
-  // TODO: wire onToken to send the token to the backend, e.g.
-  //   PushService.instance.onToken = (t) => Api.instance.registerPushToken(t);
+  // Initialise push notifications (FCM): Firebase init, permission prompt, and
+  // message listeners. The device token is registered with the backend once a
+  // user session is active (see AuthGate below) and removed on logout.
   await PushService.instance.init();
 
   runApp(const ArdentCommunityApp());
@@ -138,6 +137,14 @@ class _AuthGateState extends State<AuthGate> {
         await AuthStore.instance.clear();
       }
       if (mounted) setState(() {});
+    }
+
+    // Once we have an authenticated, ready session, register this device's FCM
+    // push token with the backend. Idempotent (backend upsert), so it's safe to
+    // run on every auth change / resume — covers both fresh login and cold-start
+    // auto-login. See docs/FCM_PUSH_NOTIFICATIONS.md.
+    if (AuthStore.instance.isAuthenticated && AppSession.instance.isReady) {
+      PushService.instance.registerToken(AppSession.instance.me.id);
     }
   }
 

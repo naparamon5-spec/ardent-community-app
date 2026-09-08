@@ -151,4 +151,17 @@ class UsersService {
   /// `DELETE /users/me/certificates/:certificateId` — delete own certificate.
   Future<void> deleteCertificate(String certificateId) =>
       _api.delete('/users/me/certificates/$certificateId');
+
+  /// `POST /users/fcm-token` — register/upsert this device's FCM push token.
+  /// Multi-device: many tokens may map to one user. Payload matches the shared
+  /// backend contract (see docs/FCM_PUSH_NOTIFICATIONS.md). Bearer auth is
+  /// attached automatically by [ApiClient].
+  Future<void> registerFcmToken(Map<String, dynamic> payload) =>
+      _api.post('/users/fcm-token', body: payload);
+
+  /// `DELETE /users/fcm-token` — remove only this device's token (on logout).
+  /// Same body as register; the backend deletes the row matching
+  /// `employee_id` AND `fcm_token`.
+  Future<void> removeFcmToken(Map<String, dynamic> payload) =>
+      _api.delete('/users/fcm-token', body: payload);
 }

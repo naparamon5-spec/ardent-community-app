@@ -4,6 +4,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
+import '../api/api.dart';
+import '../utils/device_info_util.dart';
+
 /// Handles messages that arrive while the app is terminated or backgrounded.
 ///
 /// Must be a top-level (or static) function annotated with
@@ -20,37 +23,43 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 ///
 /// One Firebase *project* serves both platforms; native config supplies the
 /// credentials at runtime:
-///   - iOS:     ios/Runner/GoogleService-Info.plist   (add via Xcode)
-///   - Android: android/app/google-services.json      (add + apply the
-///              google-services Gradle plugin)
+///   - iOS:     ios/Runner/GoogleService-Info.plist
+///   - Android: android/app/google-services.json  (+ google-services plugin)
 ///
-/// [PushService.init] is safe to call even before those files exist: it simply
-/// logs and no-ops so the app keeps launching. Wire [onToken] to POST the token
-/// to the backend so it can target this device.
+/// Backend registration matches the eforward app 1:1 — see
+/// docs/FCM_PUSH_NOTIFICATIONS.md. Call [init] once at startup (permission +
+/// listeners), then [registerToken] whenever a user session is active (login,
+/// resume) and [removeToken] on logout.
+///
+/// [init] is safe to call even before the native config files exist: it logs
+/// and no-ops so the app keeps launching.
 class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
+  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+
   bool _initialised = false;
   String? _fcmToken;
+  String? _lastUserId; // remembered so token refreshes can re-register.
+  bool _refreshHooked = false;
 
-  /// The current FCM registration token, if obtained. Send this to the backend.
+  /// The current FCM registration token, if obtained.
   String? get fcmToken => _fcmToken;
-
-  /// Called whenever a fresh FCM token is available (first fetch + refreshes).
-  /// Set this to push the token to your backend, e.g. Api.instance.registerPush.
-  Future<void> Function(String token)? onToken;
 
   /// Called when a notification is tapped and opens the app. Route from here.
   void Function(RemoteMessage message)? onOpened;
 
+  /// One-time setup: Firebase init, permission prompt, and message listeners.
+  /// Does NOT register with the backend — call [registerToken] once a user is
+  /// authenticated.
   Future<void> init() async {
     if (_initialised) return;
     try {
       await Firebase.initializeApp();
     } catch (e) {
-      // No GoogleService-Info.plist / google-services.json yet, or a config
-      // problem. Don't crash the app — push just stays inactive until fixed.
+      // No config files yet, or a config problem. Don't crash — push stays
+      // inactive until fixed.
       debugPrint('[Push] Firebase.initializeApp failed ($e) — push disabled');
       return;
     }
@@ -58,11 +67,9 @@ class PushService {
 
     FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
-    final messaging = FirebaseMessaging.instance;
-
-    // Ask the user for permission (shows the iOS system prompt; on Android 13+
-    // this drives the POST_NOTIFICATIONS runtime permission).
-    final settings = await messaging.requestPermission(
+    // Ask the user for permission (iOS system prompt; Android 13+ runtime
+    // POST_NOTIFICATIONS permission).
+    final settings = await _messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
@@ -70,27 +77,11 @@ class PushService {
     debugPrint('[Push] permission: ${settings.authorizationStatus}');
 
     // Show heads-up notifications while the app is in the foreground on iOS.
-    await messaging.setForegroundNotificationPresentationOptions(
+    await _messaging.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
       sound: true,
     );
-
-    // On iOS the FCM token is only available after the APNs token is set; fetch
-    // it explicitly so we can surface a clear log if APNs isn't wired yet.
-    if (Platform.isIOS) {
-      final apns = await messaging.getAPNSToken();
-      debugPrint('[Push] APNs token: ${apns ?? '<none — check capability/key>'}');
-    }
-
-    await _fetchAndReportToken(messaging);
-
-    // Token can rotate; keep the backend in sync.
-    messaging.onTokenRefresh.listen((token) {
-      _fcmToken = token;
-      debugPrint('[Push] token refreshed');
-      _report(token);
-    });
 
     // App opened from a notification while backgrounded.
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
@@ -99,7 +90,7 @@ class PushService {
     });
 
     // App launched cold from a notification.
-    final initial = await messaging.getInitialMessage();
+    final initial = await _messaging.getInitialMessage();
     if (initial != null) onOpened?.call(initial);
 
     // Foreground messages (app open and visible).
@@ -108,25 +99,91 @@ class PushService {
     });
   }
 
-  Future<void> _fetchAndReportToken(FirebaseMessaging messaging) async {
+  /// Registers/upserts this device's FCM token against the backend for [userId].
+  /// Idempotent — safe to call on every login and app resume. Returns `true`
+  /// only when the backend accepted the token.
+  Future<bool> registerToken(String userId) async {
+    if (userId.isEmpty) return false;
+    if (!_initialised) await init();
+    if (!_initialised) return false; // Firebase unavailable.
+
     try {
-      final token = await messaging.getToken();
-      if (token != null) {
-        _fcmToken = token;
-        debugPrint('[Push] FCM token: $token');
-        _report(token);
+      // On iOS the FCM token is only available after the APNs token is set.
+      if (Platform.isIOS) {
+        final apns = await _messaging.getAPNSToken();
+        if (apns == null) {
+          debugPrint('[Push] APNs token not ready yet — will retry on refresh');
+        }
       }
+
+      final token = await _messaging.getToken();
+      if (token == null) {
+        debugPrint('[Push] could not get FCM token');
+        return false;
+      }
+      _fcmToken = token;
+      _lastUserId = userId;
+
+      final payload = await _payload(userId, token);
+      await Api.instance.users.registerFcmToken(payload);
+      debugPrint('[Push] token registered for $userId');
+
+      _hookRefresh();
+      return true;
     } catch (e) {
-      debugPrint('[Push] getToken failed: $e');
+      debugPrint('[Push] registerToken failed: $e');
+      return false;
     }
   }
 
-  void _report(String token) {
-    final cb = onToken;
-    if (cb != null) {
-      cb(token).catchError(
-        (e) => debugPrint('[Push] onToken handler failed: $e'),
-      );
+  /// Removes only this device's token from the backend (on logout), then
+  /// invalidates the token locally so the device stops receiving pushes even if
+  /// the backend delete failed. A fresh token is generated after the next login.
+  Future<void> removeToken(String userId) async {
+    try {
+      final token = _fcmToken ?? await _messaging.getToken();
+      if (userId.isNotEmpty && token != null) {
+        try {
+          await Api.instance.users.removeFcmToken(await _payload(userId, token));
+          debugPrint('[Push] token removed from backend');
+        } catch (e) {
+          debugPrint('[Push] backend token delete failed ($e); '
+              'still invalidating on device');
+        }
+      }
+    } finally {
+      try {
+        await _messaging.deleteToken();
+      } catch (_) {}
+      _fcmToken = null;
+      _lastUserId = null;
     }
+  }
+
+  /// Builds the backend payload — identical shape to the eforward app so both
+  /// apps share one backend contract (docs/FCM_PUSH_NOTIFICATIONS.md).
+  Future<Map<String, dynamic>> _payload(String userId, String token) async {
+    final device = await DeviceInfoUtil.current();
+    return {
+      'employee_id': userId,
+      'fcm_token': token,
+      'device_id': device['deviceId'],
+      'device_model': device['deviceModel'],
+      'platform': Platform.isIOS ? 'ios' : 'android',
+    };
+  }
+
+  /// Re-register automatically when Google rotates the token.
+  void _hookRefresh() {
+    if (_refreshHooked) return;
+    _refreshHooked = true;
+    _messaging.onTokenRefresh.listen((newToken) async {
+      _fcmToken = newToken;
+      debugPrint('[Push] token refreshed');
+      final uid = _lastUserId;
+      if (uid != null && uid.isNotEmpty) {
+        await registerToken(uid);
+      }
+    });
   }
 }
