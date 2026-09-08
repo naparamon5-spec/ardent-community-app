@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -14,6 +15,7 @@ import '../calls/call_controller.dart';
 import '../theme/ardent_colors.dart';
 import '../widgets/async_view.dart';
 import '../widgets/ds.dart';
+import '../widgets/mention_field.dart';
 import 'user_profile_screen.dart';
 
 /// A group / direct-message conversation. Loads and sends messages, and — for a
@@ -57,11 +59,16 @@ class _ChatMessage {
     this.replyTo,
     this.mentions = const [],
     this.system = false,
+    this.deleted = false,
   });
   final String id;
   final String text;
   final Person author;
   final bool mine;
+
+  /// True when the message has been deleted — the bubble shows a muted "This
+  /// message was deleted" placeholder instead of the original text/media.
+  final bool deleted;
 
   /// A server-generated activity line ("X added Y to the group", "X left…") —
   /// rendered as a centered notice, not a chat bubble.
@@ -85,7 +92,12 @@ class _ChatMessage {
   bool get hasMedia => media.isNotEmpty;
   bool get hasReactions => reactions.isNotEmpty;
 
-  _ChatMessage copyWith({Map<String, int>? reactions, String? myReaction, bool clearMyReaction = false}) {
+  _ChatMessage copyWith({
+    Map<String, int>? reactions,
+    String? myReaction,
+    bool clearMyReaction = false,
+    bool? deleted,
+  }) {
     return _ChatMessage(
       id: id,
       text: text,
@@ -98,13 +110,17 @@ class _ChatMessage {
       replyTo: replyTo,
       mentions: mentions,
       system: system,
+      deleted: deleted ?? this.deleted,
     );
   }
 }
 
 class _GroupChatScreenState extends State<GroupChatScreen> {
-  final _ctrl = TextEditingController();
+  final _ctrl = MentionTextEditingController();
   final _scroll = ScrollController();
+
+  /// Mentions still spelled out (`@Name`) in the composer — sent as ids on send.
+  List<Person> _composerMentions = const [];
   final _attachKey = GlobalKey();
   List<_ChatMessage> _messages = [];
   bool _loading = true;
@@ -252,6 +268,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       replyTo: _parseReply(m['replyTo'] ?? m['replyMessage'] ?? m['parent']),
       mentions: _parseMentions(m['mentions'] ?? m['mentionedUsers'] ?? m['mentionUsers']),
       system: system,
+      deleted: m['deleted'] == true ||
+          m['isDeleted'] == true ||
+          m['deletedAt'] != null,
     );
   }
 
@@ -479,11 +498,19 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final t = _ctrl.text.trim();
     if (t.isEmpty || _sending) return;
     final replyToId = _replyingTo?.id;
+    // Mentions whose `@Name` is still present, resolved to ids for the payload.
+    final mentionPeople = _composerMentions
+        .where((p) => p.id.isNotEmpty && t.contains('@${p.name}'))
+        .toList();
+    final mentionIds = mentionPeople.map((p) => p.id).toList();
     final optimistic = _ChatMessage(
         text: t,
         author: AppSession.instance.me,
         mine: true,
         time: manilaNow(),
+        mentions: [
+          for (final p in mentionPeople) _Mention(id: p.id, name: p.name),
+        ],
         replyTo: _replyingTo == null
             ? null
             : _ReplyInfo(
@@ -494,13 +521,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     setState(() {
       _messages = [..._messages, optimistic];
       _ctrl.clear();
+      _composerMentions = const [];
       _sending = true;
       _replyingTo = null;
     });
     _scrollToEnd();
     try {
       await Api.instance.groups.sendMessage(widget.group.id,
-          text: t, replyToId: (replyToId?.isEmpty ?? true) ? null : replyToId);
+          text: t,
+          mentions: mentionIds.isEmpty ? null : mentionIds,
+          replyToId: (replyToId?.isEmpty ?? true) ? null : replyToId);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _messages.remove(optimistic));
@@ -891,7 +921,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         // Keep the react affordance on the same row as the bubble body so it
         // stays vertically centered against the message, not dropped down to
         // the timestamp beneath it.
-        if (!m.mine && isLast)
+        if (!m.mine && isLast && !m.deleted)
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
@@ -938,7 +968,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               constraints: BoxConstraints(maxWidth: maxW),
               child: Builder(
                 builder: (bctx) => GestureDetector(
-                  onLongPressStart: (_) => _showMessageMenu(bctx, m),
+                  onLongPressStart:
+                      m.deleted ? null : (_) => _showMessageMenu(bctx, m),
                   child: bubble,
                 ),
               ),
@@ -970,6 +1001,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// The inner content of a bubble: image/file attachments, a link chip, or a
   /// plain text bubble.
   Widget _bubbleBody(_ChatMessage m, BorderRadius radius) {
+    if (m.deleted) return _deletedBubble(m, radius);
     if (m.hasMedia) {
       return Column(
         crossAxisAlignment:
@@ -1003,8 +1035,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       child: _MentionText(
         text: m.text,
         baseStyle: base,
-        mentionStyle: base.copyWith(
-          fontWeight: FontWeight.w800,
+        mentionStyle: GoogleFonts.montserrat(
+          textStyle: base,
+          fontWeight: FontWeight.w700,
           color: m.mine ? Colors.white : ArdentColors.fg1,
         ),
         mentions: [
@@ -1012,6 +1045,33 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ],
         roster: _members,
         onTapUser: _openPerson,
+      ),
+    );
+  }
+
+  /// Placeholder bubble shown in place of a message that was deleted.
+  Widget _deletedBubble(_ChatMessage m, BorderRadius radius) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: ArdentColors.bgSubtle,
+        borderRadius: radius,
+        border: Border.all(color: ArdentColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.block_rounded, size: 15, color: ArdentColors.fg3),
+          const SizedBox(width: 6),
+          Text(
+            m.mine ? 'You deleted this message' : 'This message was deleted',
+            style: const TextStyle(
+              fontSize: 14,
+              fontStyle: FontStyle.italic,
+              color: ArdentColors.fg3,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1626,13 +1686,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ),
     );
     if (ok != true || m.id.isEmpty) return;
-    final backup = List<_ChatMessage>.from(_messages);
-    setState(() => _messages.remove(m));
+    // Optimistically mark it deleted in place (keeps the "deleted" placeholder
+    // in the thread), reverting if the request fails.
+    void mark(bool deleted) {
+      final idx = _messages.indexWhere((x) => x.id == m.id);
+      if (idx < 0) return;
+      setState(() => _messages[idx] = _messages[idx].copyWith(deleted: deleted));
+    }
+
+    mark(true);
     try {
       await Api.instance.groups.deleteMessage(widget.group.id, m.id);
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _messages = backup);
+      mark(false);
       _snack(e.message);
     }
   }
@@ -1956,14 +2023,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   borderRadius: BorderRadius.circular(ArdentRadii.pill),
                 ),
                 padding: const EdgeInsets.only(left: 16, right: 4),
-                child: TextField(
+                child: MentionField(
                   controller: _ctrl,
                   minLines: 1,
                   maxLines: 4,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _send(),
+                  onMentionsChanged: (m) => _composerMentions = m,
                   decoration: const InputDecoration(
-                    hintText: 'Message…',
+                    hintText: 'Message…  @ to mention',
                     isDense: true,
                     filled: false,
                     border: InputBorder.none,

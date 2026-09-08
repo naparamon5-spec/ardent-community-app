@@ -139,6 +139,10 @@ class _MentionFieldState extends State<MentionField> {
   /// Anchors the floating suggestion list to the text field.
   final LayerLink _link = LayerLink();
   final OverlayPortalController _overlay = OverlayPortalController();
+  final GlobalKey _fieldKey = GlobalKey();
+
+  /// Max height the suggestion list is allowed to take.
+  static const double _maxListHeight = 240;
 
   /// Width of the field, captured from layout so the overlay can match it.
   double _fieldWidth = 280;
@@ -305,6 +309,7 @@ class _MentionFieldState extends State<MentionField> {
           return CompositedTransformTarget(
             link: _link,
             child: TextField(
+              key: _fieldKey,
               controller: _text,
               focusNode: widget.focusNode,
               autofocus: widget.autofocus,
@@ -319,10 +324,10 @@ class _MentionFieldState extends State<MentionField> {
     );
   }
 
-  /// Vertical distance from the field's top to the bottom of the line the caret
-  /// is on — measured with a [TextPainter] that mirrors the field's text/width,
-  /// so the suggestion list can sit directly under the current typing line.
-  double _caretLineBottom() {
+  /// The top (dy) and bottom (dy + line height) of the line the caret is on,
+  /// measured from the field's top with a [TextPainter] that mirrors the field's
+  /// text and width — so the suggestion list can hug the current typing line.
+  ({double top, double bottom}) _caretLine() {
     final text = _text.text;
     final sel = _text.selection;
     final offset = (sel.isValid ? sel.baseOffset : text.length)
@@ -336,9 +341,10 @@ class _MentionFieldState extends State<MentionField> {
     )..layout(maxWidth: _fieldWidth);
     final caret =
         painter.getOffsetForCaret(TextPosition(offset: offset), Rect.zero);
-    final lineBottom = caret.dy + painter.preferredLineHeight;
+    final top = caret.dy;
+    final bottom = caret.dy + painter.preferredLineHeight;
     painter.dispose();
-    return lineBottom;
+    return (top: top, bottom: bottom);
   }
 
   /// Floating `@mention` picker, anchored just under the current caret line in
@@ -346,17 +352,31 @@ class _MentionFieldState extends State<MentionField> {
   /// and scrollable.
   Widget _overlaySuggestions() {
     final textTheme = Theme.of(context).textTheme;
+    final line = _caretLine();
+
+    // Decide whether to drop the list below the caret line or flip it above —
+    // so a field near the bottom of the screen (e.g. the chat composer) doesn't
+    // hide the list behind the keyboard.
+    var openUpward = false;
+    final box = _fieldKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box != null && box.hasSize) {
+      final media = MediaQuery.of(context);
+      final fieldTop = box.localToGlobal(Offset.zero).dy;
+      final viewportBottom = media.size.height - media.viewInsets.bottom;
+      final spaceBelow = viewportBottom - (fieldTop + line.bottom);
+      openUpward = spaceBelow < _maxListHeight && fieldTop + line.top > _maxListHeight;
+    }
+
     return Positioned(
       width: _fieldWidth,
       child: CompositedTransformFollower(
         link: _link,
         showWhenUnlinked: false,
-        // Anchor to the field's top-left and drop down by the caret's line, so
-        // the list appears right under what's being typed (not at the bottom of
-        // a tall multi-line field).
+        // Hug the caret line: drop down from its bottom, or (when there's no room
+        // below) rise up from its top.
         targetAnchor: Alignment.topLeft,
-        followerAnchor: Alignment.topLeft,
-        offset: Offset(0, _caretLineBottom() + 6),
+        followerAnchor: openUpward ? Alignment.bottomLeft : Alignment.topLeft,
+        offset: Offset(0, openUpward ? line.top - 6 : line.bottom + 6),
         child: Material(
           color: Colors.transparent,
           child: Container(
@@ -370,7 +390,7 @@ class _MentionFieldState extends State<MentionField> {
               ],
             ),
             clipBehavior: Clip.antiAlias,
-            constraints: const BoxConstraints(maxHeight: 240),
+            constraints: const BoxConstraints(maxHeight: _maxListHeight),
             child: ListView(
               padding: EdgeInsets.zero,
               shrinkWrap: true,
