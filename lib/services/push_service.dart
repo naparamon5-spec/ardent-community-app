@@ -153,6 +153,20 @@ class PushService {
       await _initAndroidNotifications();
     }
 
+    // iOS: start listening for the VoIP (PushKit) token immediately — it can
+    // arrive at any time after launch, before the user reaches the app shell —
+    // and re-register with the backend whenever it does, so the backend can send
+    // VoIP call pushes. Wired here (not only in registerToken) so the update
+    // event is never missed.
+    if (Platform.isIOS) {
+      CallKitService.instance
+        ..onVoipToken = (_) {
+          final uid = _lastUserId;
+          if (uid != null && uid.isNotEmpty) registerToken(uid);
+        }
+        ..listen();
+    }
+
     // Ask the user for permission (iOS system prompt; Android 13+ runtime
     // POST_NOTIFICATIONS permission).
     final settings = await _messaging.requestPermission(
@@ -241,14 +255,6 @@ class PushService {
       debugPrint('[Push] token registered for $userId');
 
       _hookRefresh();
-      // iOS: re-register when the VoIP (PushKit) token arrives or changes, so
-      // the backend can send VoIP call pushes.
-      if (Platform.isIOS) {
-        CallKitService.instance.onVoipToken = (_) {
-          final uid = _lastUserId;
-          if (uid != null && uid.isNotEmpty) registerToken(uid);
-        };
-      }
       return true;
     } catch (e) {
       debugPrint('[Push] registerToken failed: $e');

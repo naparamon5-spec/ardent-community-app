@@ -6,6 +6,11 @@ import flutter_callkit_incoming
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PKPushRegistryDelegate {
+  // MUST be retained as a property. A PKPushRegistry held only in a local
+  // variable is deallocated as soon as the launch method returns, and then
+  // PushKit never delivers a VoIP token or any incoming call pushes.
+  private var voipRegistry: PKPushRegistry?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -13,9 +18,10 @@ import flutter_callkit_incoming
     // Register for VoIP (PushKit) pushes so incoming calls can ring via CallKit
     // even when the app is killed or the phone is locked. The backend sends a
     // VoIP push on call start (see docs/FCM_PUSH_NOTIFICATIONS.md).
-    let voipRegistry = PKPushRegistry(queue: DispatchQueue.main)
-    voipRegistry.delegate = self
-    voipRegistry.desiredPushTypes = [.voIP]
+    let registry = PKPushRegistry(queue: DispatchQueue.main)
+    registry.delegate = self
+    registry.desiredPushTypes = [.voIP]
+    self.voipRegistry = registry
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
