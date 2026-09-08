@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "552595154817",
+    "project_id": "ardent-community",
+    "storage_bucket": "ardent-community.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:552595154817:android:1d856456bd13a3ac70ea80",
+        "android_client_info": {
+          "package_name": "com.ardentnetworks.ardent_community"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC4YvzSNKrJ8gdnz1k2g1MfmBrdAbmmye0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -83,6 +83,11 @@
 	<!-- Required because the calling/WebRTC SDK references location APIs. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Allow access to your location to improve connectivity during voice and video calls.</string>
+	<!-- Allow the app to process remote (push) notifications in the background. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<!-- Screen sharing in calls: the App Group the app + Broadcast Upload
 	     Extension share, and the extension's bundle id. Keep these in sync with
 	     the App Group capability and the extension target in Xcode

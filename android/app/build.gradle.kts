@@ -3,6 +3,8 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Firebase / Google Services — must come after the Android & Kotlin plugins.
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -20,6 +22,8 @@ android {
     }
 
     defaultConfig {
+        // Must match the package_name in android/app/google-services.json and
+        // the Android app registered in Firebase.
         applicationId = "com.ardentnetworks.ardent_community"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.

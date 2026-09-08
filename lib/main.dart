@@ -16,6 +16,7 @@ import 'screens/login_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/search_screen.dart';
+import 'services/push_service.dart';
 import 'theme/ardent_colors.dart';
 import 'theme/ardent_theme.dart';
 import 'widgets/ardent_loading.dart';
@@ -55,6 +56,12 @@ Future<void> main() async {
       debugPrint('[Call] LiveKitClient.initialize failed: $e');
     }
   }
+
+  // Initialise push notifications (FCM). Safe no-op until the native Firebase
+  // config files are added (GoogleService-Info.plist / google-services.json).
+  // TODO: wire onToken to send the token to the backend, e.g.
+  //   PushService.instance.onToken = (t) => Api.instance.registerPushToken(t);
+  await PushService.instance.init();
 
   runApp(const ArdentCommunityApp());
 }

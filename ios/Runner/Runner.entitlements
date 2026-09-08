@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Push Notifications (APNs) via Firebase Cloud Messaging. Xcode's App
+	     Store export automatically promotes this to "production" for
+	     TestFlight/App Store builds, while local debug builds use the sandbox. -->
+	<key>aps-environment</key>
+	<string>development</string>
 	<!-- App Group shared between the app and the Broadcast Upload Extension so
 	     screen-share frames can be handed over. Must match the App Group
 	     capability enabled on the Runner target in Xcode, the extension's
