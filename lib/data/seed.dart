@@ -105,15 +105,24 @@ class Comment {
     required this.text,
     this.likes = 0,
     List<Comment>? replies,
-  }) : replies = replies ?? [];
+    List<Person>? mentions,
+  })  : replies = replies ?? [],
+        mentions = mentions ?? [];
 
   final String id;
   final Person author;
-  final String text;
+
+  /// Mutable so an inline edit updates the rendered text in place.
+  String text;
   int likes;
 
   /// Threaded replies to this comment.
   final List<Comment> replies;
+
+  /// People this comment explicitly mentions — seeded into the editor so an
+  /// edit keeps existing mentions (the server replaces the stored list from the
+  /// ids it receives, so editing without them would silently strip mentions).
+  List<Person> mentions;
 
   /// Whether the current user has liked this comment.
   bool liked = false;
@@ -139,13 +148,17 @@ class Post {
     this.media = const [],
     this.fileName = '',
     this.fileSize = '',
-  }) : comments = comments ?? [];
+    List<Person>? mentions,
+  })  : comments = comments ?? [],
+        mentions = mentions ?? [];
 
   final String id;
   final Person author;
   final String time;
   final PostKind kind;
-  final String text;
+
+  /// Mutable so an inline edit updates the rendered body in place.
+  String text;
   final String title;
   final List<MapEntry<String, String>> details;
   final String note;
@@ -164,6 +177,10 @@ class Post {
   /// present, mirroring the web feed).
   final String fileName;
   final String fileSize;
+
+  /// People this post explicitly mentions — seeded into the editor so an edit
+  /// keeps existing mentions instead of silently stripping them on save.
+  List<Person> mentions;
 
   bool liked = false;
   bool saved = false;

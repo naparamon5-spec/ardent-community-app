@@ -254,6 +254,23 @@ Person personFromJson(dynamic value) {
   );
 }
 
+/// Resolves a post/comment `mentions` array to real [Person]s. Only entries
+/// carrying a usable name are kept — a mention must match an `@Name` in the text
+/// to be re-sent on edit, and a bare id with no name can't. Mirrors the web
+/// client, which seeds edit boxes from the item's existing mentions.
+List<Person> _mentions(dynamic value) {
+  final out = <Person>[];
+  for (final raw in asList(value)) {
+    if (raw is Map) {
+      final person = personFromJson(raw);
+      if (person.name.trim().isNotEmpty && person.name != 'Unknown') {
+        out.add(person);
+      }
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Media
 // ---------------------------------------------------------------------------
@@ -406,6 +423,7 @@ Comment commentFromJson(dynamic value) {
     text: _str(_pick(json, ['text', 'body', 'content'])),
     likes: _int(_pick(json, ['likeCount', 'likes', 'reactionCount'])),
     replies: asList(_pick(json, ['replies', 'children'])).map(commentFromJson).toList(),
+    mentions: _mentions(_pick(json, ['mentions', 'mentionedUsers'])),
   );
   comment.liked = _bool(_pick(json, ['likedByMe', 'liked']));
   return comment;
@@ -446,6 +464,7 @@ Post postFromJson(dynamic value) {
     media: media,
     fileName: fileName,
     fileSize: fileSize,
+    mentions: _mentions(_pick(json, ['mentions', 'mentionedUsers'])),
   );
   // Poll-level "my vote" — mark the matching option when the backend reports a
   // voted option id rather than a per-option flag.

@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../api/api.dart';
 import '../api/session.dart';
 import '../data/seed.dart';
+import '../screens/user_profile_screen.dart';
 import '../theme/ardent_colors.dart';
 import 'ds.dart';
+import 'mention_field.dart';
 import 'mention_text.dart';
 
 /// Feed post card — a faithful port of the web `feed/PostCard.vue`, covering
@@ -244,6 +246,124 @@ class _PostCardState extends State<PostCard> {
       );
   }
 
+  /// Edit the post body. Seeds the editor with the post's existing [mentions]
+  /// so saving keeps them — the `PATCH /posts/:id` body replaces the stored
+  /// mention list with whatever ids it receives, so an edit that reported no
+  /// mentions would silently strip every `@Name` still in the text.
+  Future<void> _openEditPost() async {
+    final ctrl = TextEditingController(text: post.text);
+    var active = List<Person>.of(post.mentions);
+    void Function() refresh = () {};
+    ctrl.addListener(() => refresh());
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: ArdentColors.bgSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(ArdentRadii.xl)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: StatefulBuilder(
+          builder: (ctx, setSheet) {
+            refresh = () => setSheet(() {});
+            return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                      const Expanded(
+                        child: Text('Edit post',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w700)),
+                      ),
+                      TextButton(
+                        onPressed: ctrl.text.trim().isEmpty
+                            ? null
+                            : () => Navigator.of(ctx).pop(ctrl.text),
+                        child: const Text('Save'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  MentionField(
+                    controller: ctrl,
+                    initialMentions: post.mentions,
+                    autofocus: true,
+                    minLines: 3,
+                    maxLines: 8,
+                    hintText: "What's on your mind?",
+                    onMentionsChanged: (m) => active = m,
+                  ),
+                ],
+              ),
+            ),
+          );
+          },
+        ),
+      ),
+    );
+    if (result == null) {
+      ctrl.dispose();
+      return;
+    }
+    final text = result.trim();
+    final ids =
+        active.map((m) => m.id).where((id) => id.isNotEmpty).toList();
+    try {
+      await Api.instance.posts.update(post.id, {'text': text, 'mentions': ids});
+      if (!mounted) return;
+      setState(() {
+        post.text = text;
+        post.mentions = List.of(active);
+      });
+      _toast('Post updated');
+    } catch (_) {
+      if (mounted) {
+        _toast('Couldn’t update the post', icon: Icons.error_outline_rounded);
+      }
+    } finally {
+      ctrl.dispose();
+    }
+  }
+
+  /// Persists an inline comment/reply edit. Sends the mention ids (filtered to
+  /// names still in the text) so the server's replace-on-`PATCH` keeps them,
+  /// then updates the comment in place. Returns whether it succeeded.
+  Future<bool> _submitCommentEdit(
+      Comment target, String text, List<Person> mentions) async {
+    final ids = mentions.map((m) => m.id).where((id) => id.isNotEmpty).toList();
+    try {
+      if (target.id.isNotEmpty) {
+        await Api.instance.posts
+            .editComment(post.id, target.id, text: text, mentions: ids);
+      }
+      if (!mounted) return true;
+      setState(() {
+        target.text = text;
+        target.mentions = List.of(mentions);
+      });
+      _toast('Comment updated');
+      return true;
+    } catch (_) {
+      if (mounted) {
+        _toast('Couldn’t update the comment',
+            icon: Icons.error_outline_rounded);
+      }
+      return false;
+    }
+  }
+
   void _toggleSave() {
     setState(() => post.saved = !post.saved);
     _toast(post.saved ? 'Saved to your bookmarks' : 'Removed from saved',
@@ -370,7 +490,8 @@ class _PostCardState extends State<PostCard> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _sheetItem(ctx, Icons.edit_outlined, 'Edit post', () => _toast('Edit post (demo)')),
+            if (post.author.id == AppSession.instance.me.id)
+              _sheetItem(ctx, Icons.edit_outlined, 'Edit post', _openEditPost),
             _sheetItem(ctx, Icons.link_rounded, 'Copy link',
                 () => _toast('Link copied to clipboard')),
             _sheetItem(
@@ -518,7 +639,10 @@ class _PostCardState extends State<PostCard> {
       case PostKind.photo:
       case PostKind.file:
         return MentionText(
-            text: post.text, baseStyle: text.bodyLarge ?? const TextStyle());
+            text: post.text,
+            mentions: post.mentions,
+            onTapUser: (p) => _openMentionedPerson(context, p),
+            baseStyle: text.bodyLarge ?? const TextStyle());
     }
   }
 
@@ -529,7 +653,10 @@ class _PostCardState extends State<PostCard> {
         Text(post.title, style: text.titleLarge),
         const SizedBox(height: ArdentSpacing.s2),
         MentionText(
-            text: post.text, baseStyle: text.bodyLarge ?? const TextStyle()),
+            text: post.text,
+            mentions: post.mentions,
+            onTapUser: (p) => _openMentionedPerson(context, p),
+            baseStyle: text.bodyLarge ?? const TextStyle()),
         if (post.details.isNotEmpty) ...[
           const SizedBox(height: ArdentSpacing.s3),
           Container(
@@ -1130,7 +1257,7 @@ class _PostCardState extends State<PostCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (final c in post.comments) ...[
-            _CommentTile(comment: c, onReply: _startReply),
+            _CommentTile(comment: c, onReply: _startReply, onEdit: _submitCommentEdit),
             // Inline reply composer, tucked directly under the comment being
             // replied to (indented to the reply level, like Facebook).
             if (_replyTarget == c)
@@ -1262,6 +1389,15 @@ class _PostCardState extends State<PostCard> {
   }
 }
 
+/// Opens a mentioned person's profile when their `@Name` is tapped in a post
+/// body or comment — mirroring the web, which links each mention to its profile.
+void _openMentionedPerson(BuildContext context, Person p) {
+  if (p.id.isEmpty) return;
+  Navigator.of(context).push(
+    MaterialPageRoute(builder: (_) => UserProfileScreen(person: p)),
+  );
+}
+
 /// Icon + colour for a reaction key, shared by the picker, the summary cluster,
 /// and the "who reacted" sheet.
 ({IconData icon, Color color}) reactionVisual(String key) {
@@ -1366,11 +1502,16 @@ class _CommentTile extends StatefulWidget {
   const _CommentTile({
     required this.comment,
     required this.onReply,
+    required this.onEdit,
     this.isReply = false,
   });
 
   final Comment comment;
   final void Function(Comment target) onReply;
+
+  /// Persists an inline edit — text + the mentions still spelled in it.
+  final Future<bool> Function(Comment target, String text, List<Person> mentions)
+      onEdit;
   final bool isReply;
 
   @override
@@ -1379,6 +1520,53 @@ class _CommentTile extends StatefulWidget {
 
 class _CommentTileState extends State<_CommentTile> {
   Comment get c => widget.comment;
+
+  /// Inline edit state — when editing, the bubble shows a [MentionField] seeded
+  /// with the comment's existing mentions instead of the rendered text.
+  bool _editing = false;
+  TextEditingController? _editCtrl;
+  List<Person> _editMentions = const [];
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _editCtrl?.dispose();
+    super.dispose();
+  }
+
+  void _startEdit() {
+    setState(() {
+      _editing = true;
+      _editCtrl = TextEditingController(text: c.text);
+      _editMentions = List.of(c.mentions);
+    });
+  }
+
+  void _cancelEdit() {
+    _editCtrl?.dispose();
+    setState(() {
+      _editing = false;
+      _editCtrl = null;
+    });
+  }
+
+  Future<void> _saveEdit() async {
+    final text = _editCtrl?.text.trim() ?? '';
+    if (text.isEmpty || _saving) return;
+    setState(() => _saving = true);
+    final ok = await widget.onEdit(c, text, _editMentions);
+    if (!mounted) return;
+    if (ok) {
+      _editCtrl?.dispose();
+      setState(() {
+        _editing = false;
+        _editCtrl = null;
+        _saving = false;
+      });
+    } else {
+      setState(() => _saving = false);
+    }
+  }
 
   void _toggleLike() {
     setState(() {
@@ -1390,6 +1578,7 @@ class _CommentTileState extends State<_CommentTile> {
   @override
   Widget build(BuildContext context) {
     final avatarSize = widget.isReply ? 24.0 : 28.0;
+    final mine = c.author.id == AppSession.instance.me.id;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -1417,41 +1606,74 @@ class _CommentTileState extends State<_CommentTile> {
                               fontWeight: FontWeight.w700,
                               color: ArdentColors.fg1)),
                       const SizedBox(height: 2),
-                      MentionText(
-                        text: c.text,
-                        baseStyle: const TextStyle(
-                            fontSize: 13, color: ArdentColors.fg2),
-                      ),
+                      if (_editing && _editCtrl != null)
+                        MentionField(
+                          controller: _editCtrl!,
+                          initialMentions: c.mentions,
+                          autofocus: true,
+                          minLines: 1,
+                          maxLines: 4,
+                          hintText: 'Edit your comment…',
+                          style: const TextStyle(
+                              fontSize: 13, color: ArdentColors.fg1),
+                          onMentionsChanged: (m) => _editMentions = m,
+                        )
+                      else
+                        MentionText(
+                          text: c.text,
+                          mentions: c.mentions,
+                          onTapUser: (p) => _openMentionedPerson(context, p),
+                          baseStyle: const TextStyle(
+                              fontSize: 13, color: ArdentColors.fg2),
+                        ),
                     ],
                   ),
                 ),
-                // Like · Reply · count
+                // While editing: Save / Cancel. Otherwise Like · Reply · (Edit).
                 Padding(
                   padding: const EdgeInsets.only(left: 4, top: 4),
-                  child: Row(
-                    children: [
-                      _link(
-                        c.liked ? 'Liked' : 'Like',
-                        onTap: _toggleLike,
-                        color: c.liked ? ArdentColors.accent : ArdentColors.fg2,
-                      ),
-                      _dot(),
-                      _link('Reply', onTap: () => widget.onReply(c)),
-                      if (c.likes > 0) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: const BoxDecoration(
-                              color: ArdentColors.accent, shape: BoxShape.circle),
-                          child: const Icon(Icons.thumb_up_alt_rounded,
-                              size: 8, color: Colors.white),
+                  child: _editing
+                      ? Row(
+                          children: [
+                            _link(_saving ? 'Saving…' : 'Save',
+                                onTap: _saving ? () {} : _saveEdit,
+                                color: ArdentColors.accent),
+                            _dot(),
+                            _link('Cancel', onTap: _cancelEdit),
+                          ],
+                        )
+                      : Row(
+                          children: [
+                            _link(
+                              c.liked ? 'Liked' : 'Like',
+                              onTap: _toggleLike,
+                              color: c.liked
+                                  ? ArdentColors.accent
+                                  : ArdentColors.fg2,
+                            ),
+                            _dot(),
+                            _link('Reply', onTap: () => widget.onReply(c)),
+                            if (mine) ...[
+                              _dot(),
+                              _link('Edit', onTap: _startEdit),
+                            ],
+                            if (c.likes > 0) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: const BoxDecoration(
+                                    color: ArdentColors.accent,
+                                    shape: BoxShape.circle),
+                                child: const Icon(Icons.thumb_up_alt_rounded,
+                                    size: 8, color: Colors.white),
+                              ),
+                              const SizedBox(width: 3),
+                              Text('${c.likes}',
+                                  style: const TextStyle(
+                                      fontSize: 11, color: ArdentColors.fg3)),
+                            ],
+                          ],
                         ),
-                        const SizedBox(width: 3),
-                        Text('${c.likes}',
-                            style: const TextStyle(fontSize: 11, color: ArdentColors.fg3)),
-                      ],
-                    ],
-                  ),
                 ),
                 // Nested replies — replying to a reply threads under the same
                 // parent comment.
@@ -1462,6 +1684,7 @@ class _CommentTileState extends State<_CommentTile> {
                       comment: r,
                       isReply: true,
                       onReply: (_) => widget.onReply(c),
+                      onEdit: widget.onEdit,
                     ),
                   ),
               ],

@@ -868,7 +868,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             topLeft: firstInGroup ? big : small,
             bottomLeft: lastInGroup ? big : small,
           );
-    final maxW = MediaQuery.of(context).size.width * 0.72;
+    // Image/video attachments get a wider bubble so they aren't cramped
+    // (mirrors the web chat: 0.72 → wider when a visual attachment is present).
+    final hasVisualMedia = m.media.any((it) => it.isImage || it.isVideo);
+    final maxW =
+        MediaQuery.of(context).size.width * (hasVisualMedia ? 0.88 : 0.72);
 
     final bubble = Column(
       crossAxisAlignment:
@@ -1105,48 +1109,54 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   Widget _mediaTile(_ChatMessage m, MediaItem item, BorderRadius radius) {
     if (item.isImage) {
+      // Fill the (now wider) bubble width with a sensible max-height instead of
+      // a cramped fixed width — matches the web chat's image sizing.
       return GestureDetector(
         onTap: () => _openImage(item),
         child: ClipRRect(
           borderRadius: radius,
-          child: Image.network(
-            item.url,
-            fit: BoxFit.cover,
-            width: 220,
-            loadingBuilder: (context, child, progress) {
-              if (progress == null) return child;
-              return Container(
-                width: 220,
-                height: 180,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: Image.network(
+              item.url,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return Container(
+                  width: double.infinity,
+                  height: 180,
+                  color: ArdentColors.bgSubtle,
+                  child: const Center(
+                    child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
+                );
+              },
+              errorBuilder: (context, _, _) => Container(
+                width: double.infinity,
+                height: 120,
                 color: ArdentColors.bgSubtle,
-                child: const Center(
-                  child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2)),
-                ),
-              );
-            },
-            errorBuilder: (context, _, _) => Container(
-              width: 220,
-              height: 120,
-              color: ArdentColors.bgSubtle,
-              alignment: Alignment.center,
-              child: const Icon(Icons.broken_image_outlined,
-                  color: ArdentColors.fg3, size: 28),
+                alignment: Alignment.center,
+                child: const Icon(Icons.broken_image_outlined,
+                    color: ArdentColors.fg3, size: 28),
+              ),
             ),
           ),
         ),
       );
     }
     if (item.isVideo) {
+      // Let the video fill the bubble width with a taller frame (was 220×150).
       return GestureDetector(
         onTap: () => _openUrl(item.url),
         child: ClipRRect(
           borderRadius: radius,
           child: Container(
-            width: 220,
-            height: 150,
+            width: double.infinity,
+            height: 220,
             color: const Color(0xFF10151F),
             alignment: Alignment.center,
             child: Column(
