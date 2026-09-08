@@ -448,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(ArdentRadii.pill),
                     ),
                     child: Text(
-                      "Share something…",
+                      'Share an update with Ardent…  Type @ to mention someone',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: text.bodyMedium?.copyWith(color: ArdentColors.fg3),

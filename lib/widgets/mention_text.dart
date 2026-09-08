@@ -1,8 +1,10 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../data/people_directory.dart';
 import '../data/seed.dart';
+import '../theme/ardent_colors.dart';
 
 /// Renders free text with `@Full Name` mentions in bold, tapping through to the
 /// mentioned person. Mirrors the web client's `MentionText`: a token is bolded
@@ -88,7 +90,13 @@ class _MentionTextState extends State<MentionText> {
     final pattern = '@(${names.map(RegExp.escape).join('|')})';
     final re = RegExp(pattern);
 
-    final mentionStyle = widget.baseStyle.copyWith(fontWeight: FontWeight.w700);
+    // Montserrat Black (w900) in strong near-black so a mention clearly stands
+    // out. Built via GoogleFonts so the heavy weight variant actually loads.
+    final mentionStyle = GoogleFonts.montserrat(
+      textStyle: widget.baseStyle,
+      fontWeight: FontWeight.w700,
+      color: ArdentColors.fg1,
+    );
     final spans = <InlineSpan>[];
     var last = 0;
     for (final match in re.allMatches(text)) {

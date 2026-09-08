@@ -165,7 +165,9 @@ class Post {
   final String signoff;
   final String kudosTo;
   final List<PollOption> pollOptions;
-  final bool pinned;
+
+  /// Mutable so pinning/unpinning from the post menu updates the badge in place.
+  bool pinned;
   final List<Comment> comments;
   int likeCount;
   int shareCount;

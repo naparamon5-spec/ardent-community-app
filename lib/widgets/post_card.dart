@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/api.dart';
 import '../api/session.dart';
 import '../data/seed.dart';
+import '../screens/post_detail_screen.dart';
 import '../screens/user_profile_screen.dart';
 import '../theme/ardent_colors.dart';
 import 'ds.dart';
@@ -13,9 +14,13 @@ import 'mention_text.dart';
 /// the announcement, kudos, poll, and text variants, plus the like / comment /
 /// share / save action bar and an inline comment thread.
 class PostCard extends StatefulWidget {
-  const PostCard({super.key, required this.post});
+  const PostCard({super.key, required this.post, this.detail = false});
 
   final Post post;
+
+  /// True when the card is already the full-screen [PostDetailScreen] — the body
+  /// stops being tappable (no re-navigation) and the comment thread stays open.
+  final bool detail;
 
   @override
   State<PostCard> createState() => _PostCardState();
@@ -23,14 +28,35 @@ class PostCard extends StatefulWidget {
 
 class _PostCardState extends State<PostCard> {
   bool _commentsOpen = false;
-  final _commentCtrl = TextEditingController();
+  final _commentCtrl = MentionTextEditingController();
   final _commentFocus = FocusNode();
 
   /// When set, the bottom composer is replying to this comment (Facebook-style
   /// "Replying to …" banner) instead of posting a new top-level comment.
   Comment? _replyTarget;
 
+  /// Mentions still spelled out (`@Name`) in the comment composer — sent as ids
+  /// on submit so the server records them.
+  List<Person> _commentMentions = const [];
+
   Post get post => widget.post;
+
+  @override
+  void initState() {
+    super.initState();
+    // In the full-screen detail view the thread is always expanded.
+    _commentsOpen = widget.detail;
+  }
+
+  /// Opens the post in the full-screen [PostDetailScreen], passing the live
+  /// [Post] so its local state (likes, comments, saved) carries over.
+  void _openDetail() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PostDetailScreen(post: post),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -205,7 +231,13 @@ class _PostCardState extends State<PostCard> {
     final t = _commentCtrl.text.trim();
     if (t.isEmpty) return;
     final target = _replyTarget;
-    final comment = Comment(author: AppSession.instance.me, text: t);
+    // Mentions whose `@Name` is still in the text, as ids for the API.
+    final mentions = _commentMentions
+        .where((m) => m.id.isNotEmpty && t.contains('@${m.name}'))
+        .toList();
+    final ids = mentions.map((m) => m.id).toList();
+    final comment = Comment(
+        author: AppSession.instance.me, text: t, mentions: List.of(mentions));
     setState(() {
       if (target != null) {
         target.replies.add(comment);
@@ -213,13 +245,16 @@ class _PostCardState extends State<PostCard> {
         post.comments.add(comment);
       }
       _commentCtrl.clear();
+      _commentMentions = const [];
       _replyTarget = null;
     });
     _toast(target != null ? 'Reply posted' : 'Comment posted');
     // Persist to the backend; on failure, remove the optimistic bubble.
     Api.instance.posts
         .addComment(post.id,
-            text: t, parentId: target?.id.isNotEmpty == true ? target!.id : null)
+            text: t,
+            parentId: target?.id.isNotEmpty == true ? target!.id : null,
+            mentions: ids.isEmpty ? null : ids)
         .catchError((_) {
       if (!mounted) return <String, dynamic>{};
       setState(() {
@@ -251,89 +286,31 @@ class _PostCardState extends State<PostCard> {
   /// mention list with whatever ids it receives, so an edit that reported no
   /// mentions would silently strip every `@Name` still in the text.
   Future<void> _openEditPost() async {
-    final ctrl = TextEditingController(text: post.text);
-    var active = List<Person>.of(post.mentions);
-    void Function() refresh = () {};
-    ctrl.addListener(() => refresh());
-    final result = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: ArdentColors.bgSurface,
-      shape: const RoundedRectangleBorder(
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(ArdentRadii.xl)),
-      ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: StatefulBuilder(
-          builder: (ctx, setSheet) {
-            refresh = () => setSheet(() {});
-            return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.of(ctx).pop(),
-                        child: const Text('Cancel'),
-                      ),
-                      const Expanded(
-                        child: Text('Edit post',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w700)),
-                      ),
-                      TextButton(
-                        onPressed: ctrl.text.trim().isEmpty
-                            ? null
-                            : () => Navigator.of(ctx).pop(ctrl.text),
-                        child: const Text('Save'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  MentionField(
-                    controller: ctrl,
-                    initialMentions: post.mentions,
-                    autofocus: true,
-                    minLines: 3,
-                    maxLines: 8,
-                    hintText: "What's on your mind?",
-                    onMentionsChanged: (m) => active = m,
-                  ),
-                ],
-              ),
-            ),
-          );
-          },
+    final result = await Navigator.of(context).push<_EditResult>(
+      MaterialPageRoute<_EditResult>(
+        fullscreenDialog: true,
+        builder: (_) => _EditPostPage(
+          initialText: post.text,
+          initialMentions: post.mentions,
         ),
       ),
     );
-    if (result == null) {
-      ctrl.dispose();
-      return;
-    }
-    final text = result.trim();
+    if (result == null) return; // cancelled
+    final text = result.text.trim();
     final ids =
-        active.map((m) => m.id).where((id) => id.isNotEmpty).toList();
+        result.mentions.map((m) => m.id).where((id) => id.isNotEmpty).toList();
     try {
       await Api.instance.posts.update(post.id, {'text': text, 'mentions': ids});
       if (!mounted) return;
       setState(() {
         post.text = text;
-        post.mentions = List.of(active);
+        post.mentions = List.of(result.mentions);
       });
       _toast('Post updated');
     } catch (_) {
       if (mounted) {
         _toast('Couldn’t update the post', icon: Icons.error_outline_rounded);
       }
-    } finally {
-      ctrl.dispose();
     }
   }
 
@@ -362,6 +339,21 @@ class _PostCardState extends State<PostCard> {
       }
       return false;
     }
+  }
+
+  /// Pins/unpins the post to the top of the feed. Optimistically flips the
+  /// badge, then persists via `PATCH /posts/:id`; on failure it reverts.
+  void _togglePin() {
+    final next = !post.pinned;
+    setState(() => post.pinned = next);
+    _toast(next ? 'Pinned to top' : 'Unpinned from top',
+        icon: next ? Icons.push_pin : Icons.push_pin_outlined);
+    Api.instance.posts.update(post.id, {'pinned': next}).catchError((_) {
+      if (!mounted) return <String, dynamic>{};
+      setState(() => post.pinned = !next);
+      _toast('Couldn’t update the post', icon: Icons.error_outline_rounded);
+      return <String, dynamic>{};
+    });
   }
 
   void _toggleSave() {
@@ -490,17 +482,14 @@ class _PostCardState extends State<PostCard> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (post.author.id == AppSession.instance.me.id)
-              _sheetItem(ctx, Icons.edit_outlined, 'Edit post', _openEditPost),
-            _sheetItem(ctx, Icons.link_rounded, 'Copy link',
-                () => _toast('Link copied to clipboard')),
+            _sheetItem(ctx, Icons.edit_outlined, 'Edit Post', _openEditPost),
             _sheetItem(
                 ctx,
-                post.saved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-                post.saved ? 'Remove from saved' : 'Save post',
-                _toggleSave),
-            _sheetItem(ctx, Icons.notifications_off_outlined, 'Mute notifications',
-                () => _toast('Notifications muted for this post', icon: Icons.notifications_off_rounded)),
+                post.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                post.pinned ? 'Unpin from top' : 'Pin to top',
+                _togglePin),
+            _sheetItem(ctx, Icons.link_rounded, 'Copy link',
+                () => _toast('Link copied to clipboard')),
             _sheetItem(ctx, Icons.flag_outlined, 'Report post',
                 () => _toast('Post reported to admins', icon: Icons.flag_rounded),
                 danger: true),
@@ -531,11 +520,23 @@ class _PostCardState extends State<PostCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _header(text),
-          const SizedBox(height: ArdentSpacing.s3),
-          _typeBadge(),
-          _body(text),
-          _attachments(),
+          // Tapping the header/body opens the full-screen post (except when this
+          // card IS the full-screen view). The action bar, comment thread and
+          // the header's 3-dot menu keep their own taps.
+          _TapToOpen(
+            enabled: !widget.detail,
+            onTap: _openDetail,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _header(text),
+                const SizedBox(height: ArdentSpacing.s3),
+                _typeBadge(),
+                _body(text),
+                _attachments(),
+              ],
+            ),
+          ),
           const SizedBox(height: ArdentSpacing.s3),
           _actionBar(),
           if (_commentsOpen) _commentThread(text),
@@ -1297,15 +1298,16 @@ class _PostCardState extends State<PostCard> {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: MentionField(
                     controller: _commentCtrl,
                     focusNode: _commentFocus,
                     minLines: 1,
                     maxLines: 4,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _submitComment(),
+                    onMentionsChanged: (m) => _commentMentions = m,
                     decoration: InputDecoration(
-                      hintText: replying ? 'Write a reply…' : 'Write a comment…',
+                      hintText: replying
+                          ? 'Write a reply…  @ to mention'
+                          : 'Write a comment…  @ to mention',
                       isDense: true,
                       filled: false,
                       border: InputBorder.none,
@@ -1707,4 +1709,134 @@ class _CommentTileState extends State<_CommentTile> {
         padding: EdgeInsets.symmetric(horizontal: 6),
         child: Text('·', style: TextStyle(color: ArdentColors.fg3, fontWeight: FontWeight.w700)),
       );
+}
+
+/// Wraps [child] so a tap anywhere on it (that isn't claimed by a more specific
+/// descendant, like a button or an @mention) fires [onTap]. When [enabled] is
+/// false it's a passthrough — used so the full-screen detail card isn't tappable.
+class _TapToOpen extends StatelessWidget {
+  const _TapToOpen({
+    required this.enabled,
+    required this.onTap,
+    required this.child,
+  });
+
+  final bool enabled;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: child,
+    );
+  }
+}
+
+/// Result handed back from the full-screen [_EditPostPage].
+class _EditResult {
+  const _EditResult(this.text, this.mentions);
+  final String text;
+  final List<Person> mentions;
+}
+
+/// Full-screen post editor. Owns its own [TextEditingController] lifecycle
+/// (created in [initState], disposed in [dispose]), so there's no risk of the
+/// field using a disposed controller during a close animation. Pops an
+/// [_EditResult] on Save, or null on Cancel.
+class _EditPostPage extends StatefulWidget {
+  const _EditPostPage({required this.initialText, required this.initialMentions});
+
+  final String initialText;
+  final List<Person> initialMentions;
+
+  @override
+  State<_EditPostPage> createState() => _EditPostPageState();
+}
+
+class _EditPostPageState extends State<_EditPostPage> {
+  late final MentionTextEditingController _ctrl;
+  late List<Person> _mentions;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = MentionTextEditingController(text: widget.initialText);
+    _mentions = List.of(widget.initialMentions);
+    _ctrl.addListener(() => setState(() {})); // re-evaluate Save enabled state
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (_ctrl.text.trim().isEmpty) return;
+    Navigator.of(context).pop(_EditResult(_ctrl.text, _mentions));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canSave = _ctrl.text.trim().isNotEmpty;
+    return Scaffold(
+      backgroundColor: ArdentColors.bgSurface,
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: const Text('Edit post'),
+        actions: [
+          TextButton(
+            onPressed: canSave ? _save : null,
+            child: Text('Save',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: canSave ? ArdentColors.accent : ArdentColors.fg3)),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(ArdentSpacing.s4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DsAvatar(
+                  initials: AppSession.instance.me.initials,
+                  color: AppSession.instance.me.color,
+                  size: 44,
+                  imageUrl: AppSession.instance.me.avatarUrl),
+              const SizedBox(width: ArdentSpacing.s3),
+              Expanded(
+                child: MentionField(
+                  controller: _ctrl,
+                  initialMentions: widget.initialMentions,
+                  autofocus: true,
+                  minLines: 5,
+                  maxLines: null,
+                  hintText: 'Edit your post…  @ to mention',
+                  onMentionsChanged: (m) => _mentions = m,
+                  decoration: const InputDecoration(
+                    hintText: 'Edit your post…  @ to mention',
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    filled: false,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
