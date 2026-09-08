@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/mappers.dart';
 import '../data/seed.dart';
+import '../services/push_service.dart';
 import '../theme/ardent_colors.dart';
 import 'api.dart';
 
@@ -94,6 +95,12 @@ class AppSession extends ChangeNotifier {
 
   /// Clears the session, token, and realtime connection.
   Future<void> signOut() async {
+    // Remove this device's push token from the backend BEFORE the auth token is
+    // cleared by logout() (the DELETE call needs the bearer token), then
+    // invalidate it locally. See docs/FCM_PUSH_NOTIFICATIONS.md.
+    final userId = _me?.id ?? '';
+    await PushService.instance.removeToken(userId);
+
     _me = null;
     _unreadNotifications = 0;
     Api.instance.realtime.disconnect();
