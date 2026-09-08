@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Required for the app to reach the Ardent Community backend API. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Push notifications (FCM): show notifications on Android 13+ (runtime). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Voice/video calling (LiveKit / WebRTC): capture mic + camera, route
          audio, and keep the connection stable over Wi-Fi/cellular. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>

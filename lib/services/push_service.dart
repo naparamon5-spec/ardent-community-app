@@ -3,9 +3,25 @@ import 'dart:io' show Platform;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../api/api.dart';
 import '../utils/device_info_util.dart';
+
+/// Android channel used to display foreground/data push notifications. Its id
+/// must match the `channel_id` the backend sets in the FCM `android` block.
+const AndroidNotificationChannel kDefaultChannel = AndroidNotificationChannel(
+  'ardent_default',
+  'General Notifications',
+  description: 'Community updates, messages, and alerts',
+  importance: Importance.high,
+);
+
+/// Android-only local-notifications plugin. On iOS, Firebase is the sole
+/// notification delegate and displays alerts natively — initializing this on
+/// iOS would replace Firebase's delegate and silently break iOS notifications.
+final FlutterLocalNotificationsPlugin _localNotifications =
+    FlutterLocalNotificationsPlugin();
 
 /// Handles messages that arrive while the app is terminated or backgrounded.
 ///
@@ -17,6 +33,36 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   // The isolate is fresh, so Firebase must be initialised here too.
   await Firebase.initializeApp();
   debugPrint('[Push] background message: ${message.messageId}');
+  // Android: a data-only message won't be auto-displayed by the system, so show
+  // it ourselves. (A message carrying a `notification` block is displayed by the
+  // OS while backgrounded, so we skip it here to avoid a duplicate.) On iOS,
+  // APNs already displayed it — nothing to do.
+  if (!Platform.isIOS && message.notification == null) {
+    await _showAndroidNotification(message);
+  }
+}
+
+/// Displays a heads-up notification on Android from a [RemoteMessage].
+Future<void> _showAndroidNotification(RemoteMessage message) async {
+  final n = message.notification;
+  final title = n?.title ?? message.data['title'] as String? ?? 'Ardent';
+  final body = n?.body ?? message.data['body'] as String? ?? '';
+  await _localNotifications.show(
+    id: message.hashCode,
+    title: title,
+    body: body,
+    notificationDetails: NotificationDetails(
+      android: AndroidNotificationDetails(
+        kDefaultChannel.id,
+        kDefaultChannel.name,
+        channelDescription: kDefaultChannel.description,
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      ),
+    ),
+    payload: message.data.isNotEmpty ? message.data.toString() : null,
+  );
 }
 
 /// Firebase Cloud Messaging wrapper for the app.
@@ -50,6 +96,10 @@ class PushService {
   /// Called when a notification is tapped and opens the app. Route from here.
   void Function(RemoteMessage message)? onOpened;
 
+  /// Called whenever a push arrives while the app is in the foreground. Wire
+  /// this to refresh the unread count so the in-app + icon badge stay in sync.
+  void Function(RemoteMessage message)? onForegroundMessage;
+
   /// One-time setup: Firebase init, permission prompt, and message listeners.
   /// Does NOT register with the backend — call [registerToken] once a user is
   /// authenticated.
@@ -66,6 +116,13 @@ class PushService {
     _initialised = true;
 
     FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+
+    // Android only: set up the local-notifications plugin + channel so we can
+    // display foreground and data-only pushes. Never on iOS (see the note on
+    // [_localNotifications]).
+    if (!Platform.isIOS) {
+      await _initAndroidNotifications();
+    }
 
     // Ask the user for permission (iOS system prompt; Android 13+ runtime
     // POST_NOTIFICATIONS permission).
@@ -94,9 +151,32 @@ class PushService {
     if (initial != null) onOpened?.call(initial);
 
     // Foreground messages (app open and visible).
-    FirebaseMessaging.onMessage.listen((message) {
+    FirebaseMessaging.onMessage.listen((message) async {
       debugPrint('[Push] foreground message: ${message.notification?.title}');
+      // iOS presents the alert itself (setForegroundNotificationPresentationOptions);
+      // on Android we must display it manually.
+      if (!Platform.isIOS) {
+        await _showAndroidNotification(message);
+      }
+      // Keep the unread count / badge in sync with the new arrival.
+      onForegroundMessage?.call(message);
     });
+  }
+
+  /// Initialises the Android local-notifications plugin and default channel.
+  Future<void> _initAndroidNotifications() async {
+    await _localNotifications.initialize(
+      settings: const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      ),
+      onDidReceiveNotificationResponse: (response) {
+        debugPrint('[Push] local notification tapped: ${response.payload}');
+      },
+    );
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(kDefaultChannel);
   }
 
   /// Registers/upserts this device's FCM token against the backend for [userId].

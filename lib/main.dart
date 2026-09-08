@@ -60,6 +60,10 @@ Future<void> main() async {
   // Initialise push notifications (FCM): Firebase init, permission prompt, and
   // message listeners. The device token is registered with the backend once a
   // user session is active (see AuthGate below) and removed on logout.
+  // When a push arrives in the foreground, refresh the unread count so the
+  // in-app badge and the home-screen app-icon badge stay in sync.
+  PushService.instance.onForegroundMessage =
+      (_) => AppSession.instance.refreshUnreadNotifications();
   await PushService.instance.init();
 
   runApp(const ArdentCommunityApp());

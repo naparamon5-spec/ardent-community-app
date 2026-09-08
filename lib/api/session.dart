@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/mappers.dart';
 import '../data/seed.dart';
+import '../services/app_badge.dart';
 import '../services/push_service.dart';
 import '../theme/ardent_colors.dart';
 import 'api.dart';
@@ -38,11 +39,13 @@ class AppSession extends ChangeNotifier {
   /// Unread notifications count for the signed-in user.
   int get unreadNotifications => _unreadNotifications;
 
-  /// Updates the unread notifications count and notifies listeners.
+  /// Updates the unread notifications count and notifies listeners. Also keeps
+  /// the home-screen app-icon badge in sync.
   void setUnreadNotifications(int count) {
     final clamped = count.clamp(0, 999999);
     if (_unreadNotifications != clamped) {
       _unreadNotifications = clamped;
+      AppBadge.set(clamped);
       notifyListeners();
     }
   }
@@ -51,6 +54,7 @@ class AppSession extends ChangeNotifier {
   void decrementUnreadNotifications([int amount = 1]) {
     if (_unreadNotifications > 0) {
       _unreadNotifications = (_unreadNotifications - amount).clamp(0, 999999);
+      AppBadge.set(_unreadNotifications);
       notifyListeners();
     }
   }
@@ -103,6 +107,7 @@ class AppSession extends ChangeNotifier {
 
     _me = null;
     _unreadNotifications = 0;
+    AppBadge.clear();
     Api.instance.realtime.disconnect();
     await Api.instance.auth.logout();
     notifyListeners();
