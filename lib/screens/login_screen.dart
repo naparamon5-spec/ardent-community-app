@@ -396,7 +396,18 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 16),
 
             Text(
-              'Sign in to your account',
+              'Ardent Community',
+              textAlign: TextAlign.center,
+              style: text.headlineSmall?.copyWith(
+                color: ArdentColors.fg1,
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+
+            Text(
+              'Connect. Collaborate. Belong.',
               textAlign: TextAlign.center,
               style: text.bodyMedium?.copyWith(
                 color: ArdentColors.fg3,
